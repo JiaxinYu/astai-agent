@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>抗生素管理多代理人與真實世界臨床數據整合模擬系統 v3.5 (ASTAI)</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        .agent-active { 
+            animation: agentGlow 2.5s infinite; 
+            border-color: #60a5fa !important; 
+            background-color: rgba(30, 41, 59, 0.7) !important;
+        }
+        .human-active { 
+            animation: humanGlow 2.5s infinite; 
+            border-color: #34d399 !important; 
+            background-color: rgba(30, 41, 59, 0.7) !important;
+        }
+        @keyframes agentGlow {
+            0%, 100% { box-shadow: 0 0 0 0px rgba(59, 130, 246, 0); }
+            50% { box-shadow: 0 0 16px 2px rgba(59, 130, 246, 0.4); border-color: #3b82f6; }
+        }
+        @keyframes humanGlow {
+            0%, 100% { box-shadow: 0 0 0 0px rgba(16, 185, 129, 0); }
+            50% { box-shadow: 0 0 16px 2px rgba(16, 185, 129, 0.4); border-color: #10b981; }
+        }
+        .log-entry { opacity: 0; transform: translateY(8px); animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
+        
+        .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+        .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+        .scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #475569; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen font-sans antialiased selection:bg-blue-500/30 selection:text-blue-200">
+
+    <header class="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 p-4 sticky top-0 z-50 shadow-xl">
+        <div class="max-w-7xl mx-auto flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+            <div>
+                <h1 class="text-xl font-extrabold mt-1.5 text-white tracking-tight">
+                    抗生素管理決策支援系統 <span class="text-slate-400 font-normal text-lg ml-2">| 多代理人展示面板</span>
+                </h1>
+            </div>
+            
+            <div class="flex flex-wrap items-center gap-3 w-full xl:w-auto justify-end">
+                <div class="flex items-center bg-slate-950 rounded-xl p-1 border border-slate-800">
+                    <label class="cursor-pointer bg-slate-800 hover:bg-slate-700 text-white text-xs px-3.5 py-2 rounded-lg font-medium transition-all shadow-sm">
+                        📁 上傳真實資料集 (.json)
+                        <input type="file" id="file-input" class="hidden" accept=".json" onchange="handleFileUpload(event)">
+                    </label>
+                    <span id="upload-status" class="text-slate-500 text-xs px-3 font-mono max-w-[220px] truncate">未上傳檔案（使用預設內建病歷）</span>
+                </div>
+
+                <div class="flex items-center gap-2 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-xl">
+                    <label class="text-xs font-bold text-slate-400 whitespace-nowrap">測試個案:</label>
+                    <select id="patient-select" onchange="onPatientChange(event)" class="bg-slate-950 text-slate-200 rounded-lg px-2 py-1 text-xs border border-slate-700 font-mono focus:outline-none focus:border-blue-500 w-44">
+                        <option value="0">INF000001 (預設病歷)</option>
+                    </select>
+                </div>
+
+                <div class="flex gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                    <button onclick="runPhase(1)" id="btn-p1" class="px-3 py-2 bg-slate-900 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-semibold transition-all text-slate-300 border border-transparent hover:border-blue-500 shadow">0-24h 經驗性治療</button>
+                    <button onclick="runPhase(2)" id="btn-p2" class="px-3 py-2 bg-slate-900 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-semibold transition-all text-slate-300 border border-transparent hover:border-blue-500 shadow">24-48h 質譜鑑定</button>
+                    <button onclick="runPhase(3)" id="btn-p3" class="px-3 py-2 bg-slate-900 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-semibold transition-all text-slate-300 border border-transparent hover:border-blue-500 shadow">48-72h 藥敏試驗</button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        
+        <section class="lg:col-span-3 flex flex-col gap-4">
+            <h2 class="text-xs font-bold tracking-widest text-emerald-400 uppercase border-b border-emerald-950 pb-2 flex items-center gap-2">
+                <span class="w-1.5 h-3 bg-emerald-500 rounded-full"></span>臨床醫療團隊 (Humans)
+            </h2>
+            
+            <div id="human-md" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-start gap-2 mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">主治 / 住院醫師</span>
+                    <span class="text-[9px] text-emerald-400 px-2 py-0.5 bg-emerald-950/40 rounded border border-emerald-800/60 font-medium whitespace-nowrap">最終處方權限</span>
+                </div>
+                <div class="text-xs text-slate-300 space-y-1.5 font-mono">
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>病患病歷號:</span> <span id="md-p-id" class="text-amber-400 font-bold">-</span></div>
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>基本人口學:</span> <span id="md-p-demog" class="text-slate-200">-</span></div>
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>主要診斷:</span> <span id="md-p-diag" class="text-red-400 font-bold text-right truncate max-w-[140px]">-</span></div>
+                    <div class="text-slate-400 text-[11px] pt-0.5">過去共病症 (Comorbidities): <span id="md-p-comorb" class="text-slate-300 block mt-0.5 font-sans leading-relaxed">-</span></div>
+                </div>
+            </div>
+
+            <div id="human-nurse" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">臨床護理師</span>
+                    <span class="text-[9px] text-emerald-400 px-2 py-0.5 bg-emerald-950/40 rounded border border-emerald-800/60 font-medium">生命徵象監測</span>
+                </div>
+                <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs text-slate-300 font-mono">
+                    <div class="border-b border-slate-800/50 pb-1">體溫: <span id="ns-temp" class="text-white font-semibold">-</span>°C</div>
+                    <div class="border-b border-slate-800/50 pb-1">心跳: <span id="ns-hr" class="text-white font-semibold">-</span> bpm</div>
+                    <div class="border-b border-slate-800/50 pb-1">呼吸: <span id="ns-rr" class="text-white font-semibold">-</span> /分</div>
+                    <div class="border-b border-slate-800/50 pb-1">血氧: <span id="ns-spo2" class="text-white font-semibold">-</span>%</div>
+                    <div class="pt-1">GCS昏迷指數: <span id="ns-gcs" class="text-amber-400 font-bold">-</span></div>
+                    <div class="pt-1">qSOFA評分: <span id="ns-qsofa" class="text-red-400 font-bold">-</span></div>
+                </div>
+            </div>
+
+            <div id="human-mt" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">臨床醫學檢驗師</span>
+                    <span class="text-[9px] text-emerald-400 px-2 py-0.5 bg-emerald-950/40 rounded border border-emerald-800/60 font-medium">MALDI-TOF 快速質譜</span>
+                </div>
+                <div class="text-xs text-slate-300 space-y-1 font-mono">
+                    <div class="flex justify-between"><span>送檢檢體種類:</span> <span id="mt-specimen" class="text-blue-400 font-medium">-</span></div>
+                    <div class="mt-1 pt-1 border-t border-slate-800/50">
+                        <span class="text-slate-400 block text-[11px]">鑑定目標菌種:</span>
+                        <span id="mt-organism" class="text-amber-400 font-bold italic text-sm mt-0.5 block">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="human-pharmacist" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">臨床藥師</span>
+                    <span class="text-[9px] text-emerald-400 px-2 py-0.5 bg-emerald-950/40 rounded border border-emerald-800/60 font-medium">動態 TDM 與腎功能估算</span>
+                </div>
+                <div class="text-xs text-slate-300 space-y-1.5 font-mono">
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>肌酸酐 (Cr):</span> <span id="ph-cr" class="text-red-400 font-bold">- mg/dL</span></div>
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>預估 eGFR:</span> <span id="ph-egfr" class="text-emerald-400 font-bold">- mL/min</span></div>
+                    <div class="flex justify-between text-[11px] text-slate-400 pt-0.5">
+                        <span>BUN: <span id="ph-bun" class="text-slate-200 font-sans">-</span></span>
+                        <span>Albumin: <span id="ph-alb" class="text-slate-200 font-sans">-</span></span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="human-id" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">感染科醫師 / 感管處置</span>
+                    <span class="text-[9px] text-emerald-400 px-2 py-0.5 bg-emerald-950/40 rounded border border-emerald-800/60 font-medium">抗生素管理與預後追蹤</span>
+                </div>
+                <div class="text-xs text-slate-300 space-y-1.5 font-mono">
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>ICU 加護病房需求:</span> <span id="id-icu" class="font-bold text-amber-400">-</span></div>
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>總住院天數 (LOS):</span> <span id="id-los" class="text-blue-400 font-bold">- 天</span></div>
+                    <div class="text-[11px] text-slate-400 pt-0.5">預後風險評估: <span id="id-mortality" class="text-slate-200 block font-sans mt-0.5 leading-tight">-</span></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="lg:col-span-6 flex flex-col bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl min-h-[650px] self-stretch">
+            <div class="bg-slate-950 px-4 py-3 border-b border-slate-800 flex justify-between items-center">
+                <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-red-500/80"></span>
+                    <span class="w-2.5 h-2.5 rounded-full bg-yellow-500/80"></span>
+                    <span class="w-2.5 h-2.5 rounded-full bg-green-500/80"></span>
+                    <span class="text-xs font-mono text-slate-400 ml-2 tracking-wide">DATA_ORCHESTRATOR_BUS // Pipeline Safe Stable v3.5</span>
+                </div>
+                <button onclick="clearConsole()" class="text-xs text-slate-400 hover:text-white transition-colors bg-slate-900 px-2.5 py-1 rounded-md border border-slate-800 hover:border-slate-700">清除主控台</button>
+            </div>
+            
+            <div id="terminal-log" class="p-4 flex-1 overflow-y-auto font-mono text-xs space-y-3.5 scrollbar-thin bg-slate-950/40 leading-relaxed text-slate-300">
+                <div class="text-slate-500 italic">// 系統就緒。請點擊左上方「📁 上傳真實資料集 (.json)」載入真實病歷，或直接點擊右上方的階段按鈕啟動流程模擬。</div>
+            </div>
+
+            <div class="bg-slate-950 p-3.5 border-t border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 text-xs">
+                <div class="flex items-center gap-4 flex-wrap text-slate-400">
+                    <div>整合架構: <span class="text-blue-400 font-semibold">HL7 / FHIR 適配器</span></div>
+                    <div class="hidden sm:inline text-slate-700">|</div>
+                    <div>臨床審查: <span class="text-amber-400 font-semibold">決定性安全閘門 (Deterministic Safety Gate)</span></div>
+                </div>
+                <div class="flex items-center gap-2 text-emerald-400 font-medium text-[11px] bg-emerald-950/30 px-2.5 py-1 rounded-full border border-emerald-900/50">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                    <span>安全沙箱環境隔離運行中</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="lg:col-span-3 flex flex-col gap-4">
+            <h2 class="text-xs font-bold tracking-widest text-blue-400 uppercase border-b border-blue-950 pb-2 flex items-center gap-2">
+                <span class="w-1.5 h-3 bg-blue-500 rounded-full"></span>任務導向型 AI 代理人 (ITRI Agents)
+            </h2>
+            
+            <div id="agent-ehr" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">EHR 結構化代理人</span>
+                    <span class="text-[9px] text-blue-400 px-2 py-0.5 bg-blue-950/40 rounded border border-blue-800/60 font-medium">數據管線</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">自動檢索 90 天內陽性培養微生物歷史紀錄，動態建立病患個人化的藥敏歷史輪廓 (Antibiogram)。</p>
+            </div>
+
+            <div id="agent-physio" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">生理背景與劑量特徵代理人</span>
+                    <span class="text-[9px] text-blue-400 px-2 py-0.5 bg-blue-950/40 rounded border border-blue-800/60 font-medium">PK/PD 評估</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">自動交叉比對年齡、性別、體重與歷史共病症，推導個案特異性 PK/PD 參數影響，為臨床藥師提供精準審查基礎。</p>
+            </div>
+
+            <div id="agent-ast" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">AST 藥敏報告解讀代理人</span>
+                    <span class="text-[9px] text-blue-400 px-2 py-0.5 bg-blue-950/40 rounded border border-blue-800/60 font-medium">表型分析</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">解析臨床培養與最小抑菌濃度 (MIC) 報告數值，自動對齊與對譯符合標準的 S-I-R 藥敏限制矩陣。</p>
+            </div>
+
+            <div id="agent-trend" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">AMR 流行病學脈絡代理人</span>
+                    <span class="text-[9px] text-blue-400 px-2 py-0.5 bg-blue-950/40 rounded border border-blue-800/60 font-medium">趨勢關聯</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">即時將院內/病房級多重抗藥性菌株 (MDRO) 盛行率趨勢，與病患個體生理耐受因子進行動態加權運算。</p>
+            </div>
+
+            <div id="agent-rag" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">臨床指引驗證代理人</span>
+                    <span class="text-[9px] text-blue-400 px-2 py-0.5 bg-blue-950/40 rounded border border-blue-800/60 font-medium">證據引用鏈</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">利用高維度向量檢索增強生成 (RAG)，跨資料庫調閱最新國內外臨床指引與去階層化 (De-escalation) 調藥邏輯。</p>
+            </div>
+
+            <div id="agent-safety" class="bg-slate-900/60 border border-amber-900/60 p-4 rounded-xl transition-all shadow-md hover:border-amber-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">安全審查代理人</span>
+                    <span class="text-[9px] text-amber-400 px-2 py-0.5 bg-amber-950/40 rounded border border-amber-800/60 font-medium">核心安全閘門</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">防範大語言模型 (LLM) 臨床幻覺。佈署剛性結構化生理條件限制，對模型產出的調藥建議行使終端安全否決權。</p>
+            </div>
+
+            <div id="agent-feedback" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">臨床反饋與日誌代理人</span>
+                    <span class="text-[9px] text-blue-400 px-2 py-0.5 bg-blue-950/40 rounded border border-blue-800/60 font-medium">稽核日誌</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">完整封裝並追蹤多代理人互動軌跡 (Agent Trace)，同時記錄臨床醫療團隊的覆寫與醫令修改軌跡。</p>
+            </div>
+        </section>
+    </main>
+
+
+    <script>
+        // 預設內建真實臨床病歷模擬資料集 (已補入估算體重欄位)
+        let globalDataset = [{
+            "patient": {
+                "Patient_ID": "INF000001",
+                "Demographics": { "Sex": "Female", "Age": 13, "Age_Group": "Pediatric (6-17)", "Weight_kg": 45, "Comorbidities": ["Heart Failure"] }
+            },
+            "encounters": [{
+                "Diagnosis": "Osteomyelitis (骨髓炎)",
+                "Vitals": { "Temperature_C": 38.2, "Heart_Rate_bpm": 101, "Respiratory_Rate": 24, "SBP_mmHg": 125, "DBP_mmHg": 64, "SpO2_percent": 97.9, "GCS": 13 },
+                "Scores": { "SOFA": 0, "qSOFA": 2 }
+            }],
+            "labs": [{
+                "Lab_Date": "2026-05-04",
+                "CBC": { "WBC_x10^9/L": 13, "Neutrophil_percent": 83.1, "Lymphocyte_percent": 13.3 },
+                "Inflammatory_Markers": { "CRP_mg/L": 97, "PCT_ng/mL": 2.4 },
+                "Chemistry": { "BUN_mg/dL": 20, "Creatinine_mg/dL": 1.29, "eGFR_mL/min/1.73m2": 49.9, "AST_U/L": 31, "ALT_U/L": 24, "Albumin_g/dL": 2.9, "Lactate_mmol/L": 1.5 }
+            }],
+            "cultures": [{ "Specimen_Type": "Pus (膿液)", "Organism": "Staphylococcus aureus (金黃色葡萄球菌)" }],
+            "antibiograms": [{
+                "Organism": "Staphylococcus aureus", "Phenotype": "MRSA (抗藥性金黃色葡萄球菌)",
+                "AST_Results": [
+                    { "Antibiotic_Name": "Penicillin", "MIC_Value": ">=8 ug/mL", "Interpretation": "R" },
+                    { "Antibiotic_Name": "Oxacillin", "MIC_Value": "4 ug/mL", "Interpretation": "R" }
+                ]
+            }],
+            "antibiotics": [
+                { "Type": "Empiric", "Regimen": "Vancomycin + Cefepime" },
+                { "Type": "Definitive", "Regimen": "Linezolid", "Clinical_Note": "目標性調藥：精準去階層化至 Linezolid 單一藥物療法。" }
+            ],
+            "outcomes": { "Clinical_Outcomes": { "ICU_Admission": true, "Length_of_Stay_Days": 20 }, "Trends": { "WBC_Trend": "Improved" } }
+        }];
+
+        let selectedPatient = globalDataset[0];
+        let currentTimeout = null;
+        const logContainer = document.getElementById('terminal-log');
+
+        window.onload = function() {
+            syncPatientUI();
+        };
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const parsedData = JSON.parse(e.target.result);
+                    if (Array.isArray(parsedData) && parsedData.length > 0) {
+                        globalDataset = parsedData;
+                        document.getElementById('upload-status').innerText = `成功載入 ${globalDataset.length} 筆真實臨床病歷！`;
+                        document.getElementById('upload-status').className = 'text-emerald-400 font-bold text-xs px-3 font-mono';
+                        
+                        const selectEl = document.getElementById('patient-select');
+                        selectEl.innerHTML = '';
+                        globalDataset.forEach((item, index) => {
+                            const pId = item.patient?.Patient_ID || `Index_${index}`;
+                            const diag = item.encounters?.[0]?.Diagnosis || '未明診斷';
+                            const option = document.createElement('option');
+                            option.value = index;
+                            option.innerText = `${pId} (${diag.substring(0,12)})`;
+                            selectEl.appendChild(option);
+                        });
+
+                        selectedPatient = globalDataset[0];
+                        syncPatientUI();
+                        clearConsole();
+                        logContainer.innerHTML = `<div class="text-emerald-400">// [資料串流配置完成] 已成功連線至真實世界資料集。請選擇病患個案並點擊上方階段控制鈕以運行臨床模擬。</div>`;
+                    }
+                } catch (err) {
+                    alert('JSON 檔案解析失敗，請確認資料結構格式是否正確。');
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function onPatientChange(event) {
+            try {
+                const idx = event.target.value;
+                selectedPatient = globalDataset[idx];
+                syncPatientUI();
+                clearConsole();
+                logContainer.innerHTML = `<div class="text-blue-400">// 系統已自動切換至個案病歷號：${selectedPatient.patient?.Patient_ID || '未知'}。臨床監測儀表板即時同步完成。</div>`;
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        function syncPatientUI() {
+            try {
+                const p = selectedPatient.patient || {};
+                const enc = selectedPatient.encounters?.[0] || {};
+                const lab = selectedPatient.labs?.[0] || { CBC:{}, Inflammatory_Markers:{}, Chemistry:{} };
+                const cult = selectedPatient.cultures?.[0] || {};
+                const out = selectedPatient.outcomes?.Clinical_Outcomes || {};
+
+                let sexZh = '-';
+                if(p.Demographics?.Sex === 'Female') sexZh = '女';
+                else if(p.Demographics?.Sex === 'Male') sexZh = '男';
+
+                document.getElementById('md-p-id').innerText = p.Patient_ID || 'N/A';
+                document.getElementById('md-p-demog').innerText = `${p.Demographics?.Age || '-'} 歲 / 體重: ${p.Demographics?.Weight_kg || '-'} kg / 性別: ${sexZh}`;
+                document.getElementById('md-p-diag').innerText = enc.Diagnosis || 'N/A';
+                document.getElementById('md-p-comorb').innerText = p.Demographics?.Comorbidities?.join(', ') || '無重大歷史共病紀錄';
+
+                document.getElementById('ns-temp').innerText = enc.Vitals?.Temperature_C || 'N/A';
+                document.getElementById('ns-hr').innerText = enc.Vitals?.Heart_Rate_bpm || 'N/A';
+                document.getElementById('ns-rr').innerText = enc.Vitals?.Respiratory_Rate || 'N/A';
+                document.getElementById('ns-spo2').innerText = enc.Vitals?.SpO2_percent || 'N/A';
+                document.getElementById('ns-gcs').innerText = enc.Vitals?.GCS || 'N/A';
+                document.getElementById('ns-qsofa').innerText = enc.Scores?.qSOFA !== undefined ? enc.Scores.qSOFA : 'N/A';
+
+                document.getElementById('mt-specimen').innerText = cult.Specimen_Type || '未指定檢體';
+                document.getElementById('mt-organism').innerText = cult.Organism || '尚未偵測出菌種';
+
+                document.getElementById('ph-cr').innerText = lab.Chemistry ? `${lab.Chemistry["Creatinine_mg/dL"] || 'N/A'} mg/dL` : 'N/A';
+                document.getElementById('ph-egfr').innerText = lab.Chemistry ? `${lab.Chemistry["eGFR_mL/min/1.73m2"] || 'N/A'} mL/min` : 'N/A';
+                document.getElementById('ph-bun').innerText = lab.Chemistry ? (lab.Chemistry["BUN_mg/dL"] || 'N/A') : 'N/A';
+                document.getElementById('ph-alb').innerText = lab.Chemistry ? (lab.Chemistry["Albumin_g/dL"] || 'N/A') : 'N/A';
+
+                document.getElementById('id-icu').innerText = out.ICU_Admission ? '需要 (啟動加護病房協定)' : '一般病房收治';
+                document.getElementById('id-los').innerText = out.Length_of_Stay_Days || '-';
+                document.getElementById('id-mortality').innerText = selectedPatient.outcomes?.Trends?.WBC_Trend === 'Improved' ? '預後良好 (病況朝穩定方向發展)' : '風險偏高 (需持續密切監測生理指標)';
+            } catch (err) {
+                console.error("UI 同步過程發生錯誤: ", err);
+            }
+        }
+
+        function clearConsole() {
+            logContainer.innerHTML = '<div class="text-slate-500">// 主控台日誌已清除。</div>';
+            resetHighlights();
+            if(currentTimeout) clearTimeout(currentTimeout);
+        }
+
+        function resetHighlights() {
+            document.querySelectorAll('.agent-active, .human-active').forEach(el => {
+                el.classList.remove('agent-active', 'human-active');
+            });
+        }
+
+        function runPhase(phaseNum) {
+            clearConsole();
+            
+            const pId = selectedPatient.patient?.Patient_ID || 'N/A';
+            const enc = selectedPatient.encounters?.[0] || {};
+            const cult = selectedPatient.cultures?.[0] || {};
+            const lab = selectedPatient.labs?.[0] || { CBC:{}, Inflammatory_Markers:{}, Chemistry:{} };
+            const empiricRx = selectedPatient.antibiotics?.[0]?.Regimen || '經驗性廣效抗生素療程';
+            const definitiveRx = selectedPatient.antibiotics?.[1]?.Regimen || '標靶精準去階層化抗生素';
+            const clinicalNote = selectedPatient.antibiotics?.[1]?.Clinical_Note || '無特定臨床醫學註記。';
+
+            const bloodWbc = lab.CBC ? (lab.CBC["WBC_x10^9/L"] || 'N/A') : 'N/A';
+            const bloodNeut = lab.CBC ? (lab.CBC["Neutrophil_percent"] || 'N/A') : 'N/A';
+            const bloodLymph = lab.CBC ? (lab.CBC["Lymphocyte_percent"] || 'N/A') : 'N/A';
+            const markerCrp = lab.Inflammatory_Markers ? (lab.Inflammatory_Markers["CRP_mg/L"] || 'N/A') : 'N/A';
+            const markerPct = lab.Inflammatory_Markers ? (lab.Inflammatory_Markers["PCT_ng/mL"] || '未檢驗') : '未檢驗';
+            const chemBun = lab.Chemistry ? (lab.Chemistry["BUN_mg/dL"] || 'N/A') : 'N/A';
+            const chemCr = lab.Chemistry ? (lab.Chemistry["Creatinine_mg/dL"] || 'N/A') : 'N/A';
+            const chemEgfr = lab.Chemistry ? (lab.Chemistry["eGFR_mL/min/1.73m2"] || 'N/A') : 'N/A';
+            const chemLactate = lab.Chemistry ? (lab.Chemistry["Lactate_mmol/L"] || 'N/A') : 'N/A';
+            const chemAst = lab.Chemistry ? (lab.Chemistry["AST_U/L"] || 'N/A') : 'N/A';
+            const chemAlt = lab.Chemistry ? (lab.Chemistry["ALT_U/L"] || 'N/A') : 'N/A';
+
+            // 【核心修正：建立臨床年齡自適應語意路由】
+            const demo = selectedPatient.patient?.Demographics || {};
+            const age = demo.Age || 0;
+            const weight = demo.Weight_kg || 45;
+            const comorbidities = demo.Comorbidities?.join(', ') || '無重大歷史共病紀錄';
+
+            let ageGroupTitle = "成年病患";
+            let dosageTypeTitle = "常規標準與器官功能微調劑量";
+            let cohortContext = "成人生理狀態";
+            
+            if (age <= 17) {
+                ageGroupTitle = "兒科病患";
+                dosageTypeTitle = "兒科精準劑量 (mg/kg)";
+                cohortContext = "兒科個案生理發育限制";
+            } else if (age >= 65) {
+                ageGroupTitle = "高齡病患";
+                dosageTypeTitle = "高齡器官衰退微調劑量";
+                cohortContext = "高齡與器官代償功能退化";
+            }
+
+            let phaseEvents = [];
+
+            if (phaseNum === 1) {
+                logContainer.innerHTML = `<div class="text-blue-400 font-bold border-b border-blue-900/45 pb-1">--- 啟動階段 1：經驗性抗生素處方與歷史調藥病歷比對 (個案號: ${pId}) ---</div>`;
+                phaseEvents = [
+                    { type: 'human', id: 'human-nurse', text: `[第一線護理師警示] 病患主訴嚴重身體不適。主要診斷：${enc.Diagnosis || '未知感染性疾病'}。當前臨床量測體溫：${enc.Vitals?.Temperature_C || 38}°C。` },
+                    { type: 'human', id: 'human-nurse', text: `[微生物檢體採集] 嚴格遵循臨床抗生素管理 (ASP) 核心規範，於施打第一劑抗生素前完成「${cult.Specimen_Type || '血液/尿液'}」檢體採集。` },
+                    { type: 'agent', id: 'agent-ehr', text: `[EHR 結構化代理人] 自動啟動病歷數據管線，追蹤並調閱該個案過去 90 天內的所有歷史微生物培養紀錄與特定藥物過敏史。` },
+                    { type: 'visual-antibiogram', id: 'agent-ehr', text: '' },
+                    { type: 'human', id: 'human-md', text: `[臨床醫師處方開立] 參考 [EHR 結構化代理人] 提示之歷史培養紀錄與藥敏特徵後，開立初期第一線經驗性廣效抗生素組合療程：<span class="text-yellow-400 font-bold">${empiricRx}</span>。` },
+                    
+                    /* 動態語意修正點 1 & 2：自動適應年齡分組 */
+                    { type: 'agent', id: 'agent-physio', text: `[生理背景與劑量特徵代理人] 成功擷取核心指標：個案為 ${age} 歲${ageGroupTitle}、體重 ${weight} kg、伴隨慢性病 [${comorbidities}]。` },
+                    { type: 'visual-physio-bundle', id: 'agent-physio', text: '' },
+                    { type: 'human', id: 'human-pharmacist', text: `[臨床藥師覆核] 參考 [生理背景與劑量特徵代理人] 推導之 PK/PD 提示，全面核對該廣效抗生素組合之${dosageTypeTitle}與品項適用性，確認無誤後執行藥局核發。` }
+                ];
+            } else if (phaseNum === 2) {
+                logContainer.innerHTML = `<div class="text-blue-400 font-bold border-b border-blue-900/45 pb-1">--- 啟動階段 2：醫療中心級微生物快速質譜鑑定與器官功能防線審查 (個案號: ${pId}) ---</div>`;
+                
+                const isPediatric = age <= 17;
+                const isGeriatric = age >= 65;
+                const hasHeartFailure = demo.Comorbidities?.includes("Heart Failure");
+
+                // 【核心修正：建立多重年齡層動態交叉安全評估邏輯】
+                let safetyAlertText = "";
+                if (isPediatric && chemCr > 1.0) {
+                    safetyAlertText += `<span class="text-red-400 font-bold">【兒科高度危急警示】</span>個案年齡 ${age} 歲、體重 ${weight}kg，當前血清肌酸酐高達 ${chemCr} mg/dL，已遠超該年齡層基準值！`;
+                } else if (isGeriatric && (chemEgfr < 60 || chemCr > 1.2)) {
+                    safetyAlertText += `<span class="text-red-400 font-bold">【高齡腎功能退化警示】</span>個案年齡 ${age} 歲，當前預估腎絲球過濾率 (eGFR) 僅為 ${chemEgfr} mL/min，肌酸酐 ${chemCr} mg/dL，提示顯著之藥物排泄延遲與蓄積風險！`;
+                } else if (chemCr > 1.4) {
+                    safetyAlertText += `<span class="text-red-400 font-bold">【成人急性腎損傷警示】</span>個案當前血清肌酸酐為 ${chemCr} mg/dL，超出常規標準，提示潛在 AKI 臨床風險！`;
+                }
+
+                if (hasHeartFailure) {
+                    safetyAlertText += `偵測到低心輸出量之<span class="text-amber-400 font-bold">心臟衰竭病史</span>，合併當前動態低血氧風險，將嚴重惡化腎臟髓質灌流（Renal Medullary Perfusion）。`;
+                }
+
+                phaseEvents = [
+                    { type: 'human', id: 'human-mt', text: `[微生物檢驗危急值通報] 微微生物快速鑑定完成。MALDI-TOF 質譜儀精準偵測出關鍵病原體：<span class="text-amber-400 italic font-bold">${cult.Organism || '微生物菌株'}</span>。` },
+                    { type: 'visual-lab-bundle', id: 'agent-ehr', text: JSON.stringify({ bloodWbc, bloodNeut, bloodLymph, markerCrp, markerPct, chemBun, chemCr, chemEgfr, chemLactate, chemAst, chemAlt }) },
+                    { type: 'agent', id: 'agent-trend', text: `[AMR 流行病學脈絡代理人] 立即將質譜儀鑑定報告與當前病房級流行病學抗藥性矩陣串聯，計算環境多重抗藥性 (MDRO) 之暴露風險權重。` },
+                    { type: 'agent', id: 'agent-rag', text: `[臨床指引驗證代理人] 啟動高維度向量指引 RAG 檢索，交叉比對病患當前發炎指標數據與國際敗血症 (Sepsis) 最新臨床處置指引。` },
+                    { type: 'agent', id: 'agent-safety', text: `[安全審查代理人 (動態安全閘門)] 核心審查鎖定！${safetyAlertText} <br><span class="text-red-500 font-bold">🚫 觸發決定性臨床硬限制規則：</span>強制攔截大語言模型可能產出的標準去階層化調藥建議，行使終端安全否決權。嚴厲警告臨床團隊：<span class="underline">此時若開立具潛在腎毒性之經驗性藥物（如 Vancomycin / Aminoglycosides）必須立即進行 TDM 監測或強制限量，避免誘導急性腎衰竭。</span>` },
+                    /* 動態語意修正點 3：修正因寫死兒科造成的醫療錯誤 */
+                    { type: 'human', id: 'human-md', text: `[臨床團隊最終審查] 主治醫師與感染科會簽專家共同審視 [安全審查代理人] 攔截之高風險生理軌跡，確認因${cohortContext}與心衰竭共病導致藥物清除率顯著下降；當即執行處方覆寫、微調劑量，改行精準標靶去階層化治療。` }
+                ];
+            } else if (phaseNum === 3) {
+                logContainer.innerHTML = `<div class="text-blue-400 font-bold border-b border-blue-900/45 pb-1">--- 啟動階段 3：體外抗生素敏感性報告解讀與精準調藥 (個案號: ${pId}) ---</div>`;
+                phaseEvents = [
+                    { type: 'human', id: 'human-mt', text: `[微生物報告正式發行] 完整 48-72 小時體外抗生素敏感性試驗 (AST) 與最小抑菌濃度 (MIC) 報告正式登錄至醫院系統。` },
+                    { type: 'agent', id: 'agent-ast', text: `[AST 藥敏報告解讀代理人] 自動解析非結構化文本藥敏數據，將其對齊並翻譯為標準化的布林值 S-I-R 臨床決策矩陣。` },
+                    { type: 'agent', id: 'agent-rag', text: `[臨床指引驗證代理人] 精準比對菌株對應指引，自動產出專屬的標靶抗生素去階層化建議方案：<span class="text-emerald-400 font-bold">${definitiveRx}</span>。` },
+                    { type: 'human', id: 'human-id', text: `[感染科專科醫師會簽] 醫師詳細審查多代理人工作流產出的「RAG 臨床指引證據引用鏈」，進行電子簽章並正式開立精準標靶照會醫令。` },
+                    { type: 'human', id: 'human-pharmacist', text: `[臨床藥師 TDM 監測] 持續追蹤抗生素血中濃度與動態藥物清除率，向團隊提供臨床反饋，並給予靜脈注射轉口服 (IV-to-PO) 的安全切換時間點建議。` },
+                    { type: 'agent', id: 'agent-feedback', text: `[臨床反饋代理人] 完整封裝、打包並封存此個案的多代理人互動稽核軌跡 (Agent Trace) 至資料庫。<br><span class="text-slate-400 text-[11px] block mt-1.5 bg-slate-900 p-2.5 rounded-lg border border-slate-800"><b>真實臨床病歷註記：</b> ${clinicalNote}</span>` }
+                ];
+            }
+
+            executeEventStep(phaseEvents, 0);
+        }
+
+        function executeEventStep(events, index) {
+            if (index >= events.length) {
+                const endDiv = document.createElement('div');
+                endDiv.className = 'text-slate-500 font-bold pt-2 border-t border-slate-900 log-entry';
+                endDiv.innerHTML = `// [模擬完成] 多源異質病患臨床資料串流 (符合 HL7 / FHIR Schema 規範) 稽核模擬已順利完成。`;
+                logContainer.appendChild(endDiv);
+                logContainer.scrollTop = logContainer.scrollHeight;
+                return;
+            }
+
+            const ev = events[index];
+            resetHighlights();
+
+            const element = document.getElementById(ev.id);
+            if (element) {
+                if (ev.type === 'human') element.classList.add('human-active');
+                if (ev.type === 'agent') element.classList.add('agent-active');
+            }
+
+            const logDiv = document.createElement('div');
+            logDiv.className = 'log-entry space-y-1';
+            const timestamp = new Date().toLocaleTimeString();
+
+            if (ev.type === 'visual-antibiogram') {
+                const abData = selectedPatient.antibiograms?.[0] || { AST_Results: [] };
+                let rowsHtml = '';
+                
+                if (abData.AST_Results && abData.AST_Results.length > 0) {
+                    abData.AST_Results.forEach(r => {
+                        const interpretColor = r.Interpretation === 'R' ? 'text-red-400 font-bold' : 'text-emerald-400 font-bold';
+                        let interpretZh = r.Interpretation;
+                        if(r.Interpretation === 'R') interpretZh = 'R (抗藥性)';
+                        else if(r.Interpretation === 'S') interpretZh = 'S (敏感性)';
+                        else if(r.Interpretation === 'I') interpretZh = 'I (具劑量相依敏感性)';
+
+                        rowsHtml += `
+                            <tr class="border-b border-slate-800 hover:bg-slate-800/40 transition-colors">
+                                <td class="p-2 text-left text-slate-300 font-medium">${r.Antibiotic_Name}</td>
+                                <td class="p-2 ${interpretColor}">${interpretZh}</td>
+                                <td class="p-2 text-slate-400">${r.MIC_Value || '-'}</td>
+                            </tr>
+                        `;
+                    });
+                } else {
+                    rowsHtml = `<tr><td colspan="3" class="p-3 text-slate-500 italic">此個案查無歷史微生物培養數據</td></tr>`;
+                }
+
+                logDiv.innerHTML = `
+                    <div class="flex gap-2 text-amber-400 items-start">
+                        <span class="text-slate-600 font-normal">[${timestamp}]</span>
+                        <span class="font-bold">[歷史藥敏輪廓摘要]</span>
+                        <span class="flex-1">EHR 結構化代理人動態渲染該病患 90 天內的歷史抗生素敏感性輪廓：</span>
+                    </div>
+                    <div class="ml-8 my-2.5 bg-slate-900 border border-amber-500/20 rounded-xl p-3 max-w-md shadow-lg">
+                        <div class="text-slate-400 text-[11px] mb-2 font-semibold">歷史分離菌株：<span class="italic text-amber-400 font-bold">${abData.Organism || 'N/A'}</span> (${abData.Phenotype || '野生型菌株'})</div>
+                        <table class="w-full text-[11px] border-collapse font-mono">
+                            <thead>
+                                <tr class="bg-slate-950 text-slate-400 text-[10px] uppercase tracking-wider">
+                                    <th class="p-2 text-left rounded-l-md">抗生素名稱 (Antibiotic)</th>
+                                    <th class="p-2 text-center">藥敏判定 (INT)</th>
+                                    <th class="p-2 text-center rounded-r-md">MIC 數值</th>
+                                </tr>
+                            </thead>
+                            <tbody>${rowsHtml}</tbody>
+                        </table>
+                    </div>
+                `;
+            } 
+            // 【動態修正點 4：優化藥師決策提示卡片，依據年齡路由給予正確的 PK/PD 導引】
+            else if (ev.type === 'visual-physio-bundle') {
+                const p = selectedPatient.patient || {};
+                const demo = p.Demographics || {};
+                let sexZh = demo.Sex === 'Female' ? '女' : (demo.Sex === 'Male' ? '男' : '-');
+                
+                let pkPdTipsHtml = "";
+                if (demo.Age <= 17) {
+                    pkPdTipsHtml = `1. 該個案屬<span class="text-emerald-400 font-bold">兒科族群</span>，因身體器官發育與藥物清除代謝速率與成人相異，必須嚴格依據 <span class="text-emerald-400 font-bold">mg/kg</span> 基礎計算單劑與每日上限劑量。<br>`;
+                } else if (demo.Age >= 65) {
+                    pkPdTipsHtml = `1. 該個案屬<span class="text-amber-400 font-bold">高齡族群</span>，生理上脂肪比例增加、肌肉量及腎血流量下降，親水性藥物之分佈容積（Vd）顯著改變，極易發生累積性藥物毒性。<br>`;
+                } else {
+                    pkPdTipsHtml = `1. 該個案屬<span class="text-blue-400 font-bold">常規成年族群</span>，建議參照標準體表面積與常規成人抗生素指引給藥，並依據體重排除極端肥胖（Obesity）之劑量偏誤。<br>`;
+                }
+
+                logDiv.innerHTML = `
+                    <div class="flex gap-2 text-blue-400 items-start">
+                        <span class="text-slate-600 font-normal">[${timestamp}]</span>
+                        <span class="font-bold">[生理背景與 PK/PD 特徵摘要]</span>
+                        <span class="flex-1">代理人已自動為臨床藥師彙整抗生素劑量決策關鍵因子：</span>
+                    </div>
+                    <div class="ml-8 my-2.5 bg-slate-900 border border-blue-500/20 rounded-xl p-3.5 max-w-md shadow-lg text-[11px]">
+                        <div class="grid grid-cols-2 gap-2 font-mono mb-2 border-b border-slate-800 pb-2">
+                            <div>基本人口學: <span class="text-white font-bold">${demo.Age || '-'} 歲 (${sexZh})</span></div>
+                            <div>估算體重: <span class="text-white font-bold">${demo.Weight_kg || 45} kg</span></div>
+                            <div class="col-span-2">慢性共病症: <span class="text-amber-400 font-bold">${demo.Comorbidities?.join(', ') || '無重大歷史共病紀錄'}</span></div>
+                        </div>
+                        <div class="text-slate-400 leading-relaxed bg-slate-950 p-2.5 rounded border border-slate-800">
+                            <span class="text-red-400 font-bold">💡 藥師 PK/PD 決策導引提示：</span><br>
+                            ${pkPdTipsHtml}
+                            2. 檢出心臟衰竭（Heart Failure）共病，需高度警惕親水性抗生素在體液蓄積或分佈容積擴大時可能造成的維持劑量過高風險。
+                        </div>
+                    </div>
+                `;
+            }
+            else if (ev.type === 'visual-lab-bundle') {
+                const d = JSON.parse(ev.text);
+                logDiv.innerHTML = `
+                    <div class="flex gap-2 text-blue-400 items-start">
+                        <span class="text-slate-600 font-normal">[${timestamp}]</span>
+                        <span class="font-bold">[實驗室數據同步注入]</span>
+                        <span class="flex-1">EHR 核心日常常規檢驗數據組合包 (Lab Bundle) 並行同步：</span>
+                    </div>
+                    <div class="ml-8 my-2.5 bg-slate-900 border border-blue-500/20 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs max-w-xl shadow-lg">
+                        <div class="sm:border-r border-slate-800 sm:pr-3">
+                            <span class="text-blue-400 font-bold block mb-1.5 border-b border-slate-800 pb-1">🩸 常規血球計數與發炎指標 (CBC)</span>
+                            <ul class="space-y-1 text-slate-300 text-[11px]">
+                                <div class="flex justify-between"><span>白血球 (WBC):</span><span class="text-red-400 font-bold">${d.bloodWbc} x10^9/L</span></div>
+                                <div class="flex justify-between"><span>嗜中性白血球 (%):</span><span class="text-amber-400">${d.bloodNeut} %</span></div>
+                                <div class="flex justify-between"><span>淋巴球 (%):</span><span class="text-slate-400">${d.bloodLymph} %</span></div>
+                                <div class="flex justify-between"><span>C-反應蛋白 (CRP):</span><span class="text-red-400 font-bold">${d.markerCrp} mg/L</span></div>
+                                <div class="flex justify-between"><span>降鈣素原 (PCT):</span><span class="text-amber-300">${d.markerPct} ng/mL</span></div>
+                            </ul>
+                        </div>
+                        <div>
+                            <span class="text-blue-400 font-bold block mb-1.5 border-b border-slate-800 pb-1">🧪 生化、代謝與多器官功能指標</span>
+                            <ul class="space-y-1 text-slate-300 text-[11px]">
+                                <div class="flex justify-between"><span>尿素氮 BUN / 肌酸酐 Cr:</span><span class="text-amber-300">${d.chemBun} / ${d.chemCr} mg/dL</span></div>
+                                <div class="flex justify-between"><span>eGFR 腎臟清除率:</span><span class="text-emerald-400 font-bold">${d.chemEgfr} mL/min</span></div>
+                                <div class="flex justify-between"><span>血液乳酸 (Lactate):</span><span class="text-red-400 font-bold">${d.chemLactate} mmol/L</span></div>
+                                <div class="flex justify-between"><span>肝功能酵素 (AST / ALT):</span><span class="text-slate-400">${d.chemAst} / ${d.chemAlt} U/L</span></div>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+            } 
+            else {
+                const isHuman = ev.type === 'human';
+                logDiv.className = `log-entry flex gap-2 items-start ${isHuman ? 'text-emerald-300' : 'text-blue-300'}`;
+                const badgeColor = isHuman ? 'text-emerald-500' : 'text-blue-500';
+                const badge = isHuman ? '[臨床醫療人員]' : '[AI代理人]';
+                logDiv.innerHTML = `
+                    <span class="text-slate-600 font-normal">[${timestamp}]</span>
+                    <span class="${badgeColor} font-bold whitespace-nowrap">${badge}</span>
+                    <span class="flex-1 text-slate-200">${ev.text}</span>
+                `;
+            }
+            
+            logContainer.appendChild(logDiv);
+            logContainer.scrollTop = logContainer.scrollHeight;
+
+            currentTimeout = setTimeout(() => {
+                executeEventStep(events, index + 1);
+            }, 2000);
+        }
+    </script>
+</body>
+</html>
