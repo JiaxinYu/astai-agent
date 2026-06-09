@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Antimicrobial Stewardship Multi-Agent & RWE Clinical Data Integration Simulator v3.5 (ASTAI)</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        .agent-active { 
+            animation: agentGlow 2.5s infinite; 
+            border-color: #60a5fa !important; 
+            background-color: rgba(30, 41, 59, 0.7) !important;
+        }
+        .human-active { 
+            animation: humanGlow 2.5s infinite; 
+            border-color: #34d399 !important; 
+            background-color: rgba(30, 41, 59, 0.7) !important;
+        }
+        @keyframes agentGlow {
+            0%, 100% { box-shadow: 0 0 0 0px rgba(59, 130, 246, 0); }
+            50% { box-shadow: 0 0 16px 2px rgba(59, 130, 246, 0.4); border-color: #3b82f6; }
+        }
+        @keyframes humanGlow {
+            0%, 100% { box-shadow: 0 0 0 0px rgba(16, 185, 129, 0); }
+            50% { box-shadow: 0 0 16px 2px rgba(16, 185, 129, 0.4); border-color: #10b981; }
+        }
+        .log-entry { opacity: 0; transform: translateY(8px); animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
+        
+        .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+        .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+        .scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #475569; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen font-sans antialiased selection:bg-blue-500/30 selection:text-blue-200">
+
+    <header class="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 p-4 sticky top-0 z-50 shadow-xl">
+        <div class="max-w-7xl mx-auto flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+            <div>
+                <h1 class="text-xl font-extrabold mt-1.5 text-white tracking-tight">
+                    Antimicrobial Stewardship Decision Support System <span class="text-slate-400 font-normal text-lg ml-2">| Multi-Agent Orchestration Panel</span>
+                </h1>
+            </div>
+            
+            <div class="flex flex-wrap items-center gap-3 w-full xl:w-auto justify-end">
+                <div class="flex items-center bg-slate-950 rounded-xl p-1 border border-slate-800">
+                    <label class="cursor-pointer bg-slate-800 hover:bg-slate-700 text-white text-xs px-3.5 py-2 rounded-lg font-medium transition-all shadow-sm">
+                        📁 Upload RWD Dataset (.json)
+                        <input type="file" id="file-input" class="hidden" accept=".json" onchange="handleFileUpload(event)">
+                    </label>
+                    <span id="upload-status" class="text-slate-500 text-xs px-3 font-mono max-w-[220px] truncate">No file uploaded (Using default chart)</span>
+                </div>
+
+                <div class="flex items-center gap-2 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-xl">
+                    <label class="text-xs font-bold text-slate-400 whitespace-nowrap">Test Case:</label>
+                    <select id="patient-select" onchange="onPatientChange(event)" class="bg-slate-950 text-slate-200 rounded-lg px-2 py-1 text-xs border border-slate-700 font-mono focus:outline-none focus:border-blue-500 w-44">
+                        <option value="0">INF000001 (Default EMR)</option>
+                    </select>
+                </div>
+
+                <div class="flex gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                    <button onclick="runPhase(1)" id="btn-p1" class="px-3 py-2 bg-slate-900 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-semibold transition-all text-slate-300 border border-transparent hover:border-blue-500 shadow">0-24h Empiric Rx</button>
+                    <button onclick="runPhase(2)" id="btn-p2" class="px-3 py-2 bg-slate-900 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-semibold transition-all text-slate-300 border border-transparent hover:border-blue-500 shadow">24-48h Mass Spec ID</button>
+                    <button onclick="runPhase(3)" id="btn-p3" class="px-3 py-2 bg-slate-900 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-semibold transition-all text-slate-300 border border-transparent hover:border-blue-500 shadow">48-72h AST Report</button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        
+        <section class="lg:col-span-3 flex flex-col gap-4">
+            <h2 class="text-xs font-bold tracking-widest text-emerald-400 uppercase border-b border-emerald-950 pb-2 flex items-center gap-2">
+                <span class="w-1.5 h-3 bg-emerald-500 rounded-full"></span>Clinical Care Team (Humans)
+            </h2>
+            
+            <div id="human-md" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-start gap-2 mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">Attending / Resident MD</span>
+                    <span class="text-[9px] text-emerald-400 px-2 py-0.5 bg-emerald-950/40 rounded border border-emerald-800/60 font-medium whitespace-nowrap">Final Sign-off Authority</span>
+                </div>
+                <div class="text-xs text-slate-300 space-y-1.5 font-mono">
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>Patient MRN:</span> <span id="md-p-id" class="text-amber-400 font-bold">-</span></div>
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>Demographics:</span> <span id="md-p-demog" class="text-slate-200">-</span></div>
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>Primary Dx:</span> <span id="md-p-diag" class="text-red-400 font-bold text-right truncate max-w-[140px]-">-</span></div>
+                    <div class="text-slate-400 text-[11px] pt-0.5">Active Comorbidities: <span id="md-p-comorb" class="text-slate-300 block mt-0.5 font-sans leading-relaxed">-</span></div>
+                </div>
+            </div>
+
+            <div id="human-nurse" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">Clinical Nurse (RN)</span>
+                    <span class="text-[9px] text-emerald-400 px-2 py-0.5 bg-emerald-950/40 rounded border border-emerald-800/60 font-medium">Vitals Monitoring</span>
+                </div>
+                <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs text-slate-300 font-mono">
+                    <div class="border-b border-slate-800/50 pb-1">Temp: <span id="ns-temp" class="text-white font-semibold">-</span>°C</div>
+                    <div class="border-b border-slate-800/50 pb-1">HR: <span id="ns-hr" class="text-white font-semibold">-</span> bpm</div>
+                    <div class="border-b border-slate-800/50 pb-1">RR: <span id="ns-rr" class="text-white font-semibold">-</span> /min</div>
+                    <div class="border-b border-slate-800/50 pb-1">SpO2: <span id="ns-spo2" class="text-white font-semibold">-</span>%</div>
+                    <div class="pt-1">GCS Score: <span id="ns-gcs" class="text-amber-400 font-bold">-</span></div>
+                    <div class="pt-1">qSOFA Score: <span id="ns-qsofa" class="text-red-400 font-bold">-</span></div>
+                </div>
+            </div>
+
+            <div id="human-mt" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">Clinical Microbiologist</span>
+                    <span class="text-[9px] text-emerald-400 px-2 py-0.5 bg-emerald-950/40 rounded border border-emerald-800/60 font-medium">MALDI-TOF Mass Spec</span>
+                </div>
+                <div class="text-xs text-slate-300 space-y-1 font-mono">
+                    <div class="flex justify-between"><span>Specimen Source:</span> <span id="mt-specimen" class="text-blue-400 font-medium">-</span></div>
+                    <div class="mt-1 pt-1 border-t border-slate-800/50">
+                        <span class="text-slate-400 block text-[11px]">Identified Organism:</span>
+                        <span id="mt-organism" class="text-amber-400 font-bold italic text-sm mt-0.5 block">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="human-pharmacist" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">Clinical Pharmacist (PharmD)</span>
+                    <span class="text-[9px] text-emerald-400 px-2 py-0.5 bg-emerald-950/40 rounded border border-emerald-800/60 font-medium">Dynamic TDM & CrCl Tracking</span>
+                </div>
+                <div class="text-xs text-slate-300 space-y-1.5 font-mono">
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>Serum Cr:</span> <span id="ph-cr" class="text-red-400 font-bold">- mg/dL</span></div>
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>Estimated eGFR:</span> <span id="ph-egfr" class="text-emerald-400 font-bold">- mL/min</span></div>
+                    <div class="flex justify-between text-[11px] text-slate-400 pt-0.5">
+                        <span>BUN: <span id="ph-bun" class="text-slate-200 font-sans">-</span></span>
+                        <span>Albumin: <span id="ph-alb" class="text-slate-200 font-sans">-</span></span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="human-id" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">Infectious Diseases (ID) MD</span>
+                    <span class="text-[9px] text-emerald-400 px-2 py-0.5 bg-emerald-950/40 rounded border border-emerald-800/60 font-medium">Stewardship & Consultation</span>
+                </div>
+                <div class="text-xs text-slate-300 space-y-1.5 font-mono">
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>ICU Requirement:</span> <span id="id-icu" class="font-bold text-amber-400">-</span></div>
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>Length of Stay (LOS):</span> <span id="id-los" class="text-blue-400 font-bold">- days</span></div>
+                    <div class="text-[11px] text-slate-400 pt-0.5">Prognostic Risk Assessment: <span id="id-mortality" class="text-slate-200 block font-sans mt-0.5 leading-tight">-</span></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="lg:col-span-6 flex flex-col bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl min-h-[650px] self-stretch">
+            <div class="bg-slate-950 px-4 py-3 border-b border-slate-800 flex justify-between items-center">
+                <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-red-500/80"></span>
+                    <span class="w-2.5 h-2.5 rounded-full bg-yellow-500/80"></span>
+                    <span class="w-2.5 h-2.5 rounded-full bg-green-500/80"></span>
+                    <span class="text-xs font-mono text-slate-400 ml-2 tracking-wide">DATA_ORCHESTRATOR_BUS // Pipeline Safe Stable v3.5</span>
+                </div>
+                <button onclick="clearConsole()" class="text-xs text-slate-400 hover:text-white transition-colors bg-slate-900 px-2.5 py-1 rounded-md border border-slate-800 hover:border-slate-700">Clear Console</button>
+            </div>
+            
+            <div id="terminal-log" class="p-4 flex-1 overflow-y-auto font-mono text-xs space-y-3.5 scrollbar-thin bg-slate-950/40 leading-relaxed text-slate-300">
+                <div class="text-slate-500 italic">// System ready. Click "📁 Upload RWD Dataset (.json)" to load patient charts, or interact with the timeline phases above to launch simulation traces.</div>
+            </div>
+
+            <div class="bg-slate-950 p-3.5 border-t border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 text-xs">
+                <div class="flex items-center gap-4 flex-wrap text-slate-400">
+                    <div>Architecture: <span class="text-blue-400 font-semibold">HL7 / FHIR Native Adapter</span></div>
+                    <div class="hidden sm:inline text-slate-700">|</div>
+                    <div>Clinical Engine: <span class="text-amber-400 font-semibold">Deterministic Safety Gate</span></div>
+                </div>
+                <div class="flex items-center gap-2 text-emerald-400 font-medium text-[11px] bg-emerald-950/30 px-2.5 py-1 rounded-full border border-emerald-900/50">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                    <span>Sandbox Sandbox Protocol Active</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="lg:col-span-3 flex flex-col gap-4">
+            <h2 class="text-xs font-bold tracking-widest text-blue-400 uppercase border-b border-blue-950 pb-2 flex items-center gap-2">
+                <span class="w-1.5 h-3 bg-blue-500 rounded-full"></span>Task-Oriented AI Agents (ITRI Agents)
+            </h2>
+            
+            <div id="agent-ehr" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">EHR Structuring Agent</span>
+                    <span class="text-[9px] text-blue-400 px-2 py-0.5 bg-blue-950/40 rounded border border-blue-800/60 font-medium">Data Pipeline</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">Automatically parses 90-day history of positive cultures, dynamically building out localized cumulative patient-specific antibiogram profiles.</p>
+            </div>
+
+            <div id="agent-physio" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">Physiological Profiling Agent</span>
+                    <span class="text-[9px] text-blue-400 px-2 py-0.5 bg-blue-950/40 rounded border border-blue-800/60 font-medium">PK/PD Evaluation</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">Cross-references age, sex, total body weight, and clinical comorbidities to infer patient-specific PK/PD constraints for clinical pharmacist validation.</p>
+            </div>
+
+            <div id="agent-ast" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">AST Interpretation Agent</span>
+                    <span class="text-[9px] text-blue-400 px-2 py-0.5 bg-blue-950/40 rounded border border-blue-800/60 font-medium">Phenotype Analysis</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">Deconstructs culture readouts and Minimum Inhibitory Concentration (MIC) bounds, translating raw laboratory telemetry to standard S-I-R decision matrices.</p>
+            </div>
+
+            <div id="agent-trend" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">AMR Context Agent</span>
+                    <span class="text-[9px] text-blue-400 px-2 py-0.5 bg-blue-950/40 rounded border border-blue-800/60 font-medium">Trend Mapping</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">Maps hospital/ward-level Multi-Drug Resistant Organism (MDRO) prevalence trends against host tolerance metrics to dynamically calculate risk weights.</p>
+            </div>
+
+            <div id="agent-rag" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">Guideline Validation Agent</span>
+                    <span class="text-[9px] text-blue-400 px-2 py-0.5 bg-blue-950/40 rounded border border-blue-800/60 font-medium">Evidence Chain</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">Leverages high-dimensional vector Retrieval-Augmented Generation (RAG) to query the latest institutional and national guidelines for precise de-escalation pathways.</p>
+            </div>
+
+            <div id="agent-safety" class="bg-slate-900/60 border border-amber-900/60 p-4 rounded-xl transition-all shadow-md hover:border-amber-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">Safety Review Agent</span>
+                    <span class="text-[9px] text-amber-400 px-2 py-0.5 bg-amber-950/40 rounded border border-amber-800/60 font-medium">Core Safety Gate</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">Combats LLM hallucinations. Deploys rigid physiological boundaries and hard-coded medical logic to execute final veto power over any generative adjustments.</p>
+            </div>
+
+            <div id="agent-feedback" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">Feedback & Logging Agent</span>
+                    <span class="text-[9px] text-blue-400 px-2 py-0.5 bg-blue-950/40 rounded border border-blue-800/60 font-medium">Audit Trail</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">Packages and archives multi-agent telemetry traces (Agent Trace) while tracking manual clinician override behavior and modifications.</p>
+            </div>
+        </section>
+    </main>
+
+
+    <script>
+        // Default Mock Patient Dataset conforming to standard clinical profiles (US English localization)
+        let globalDataset = [{
+            "patient": {
+                "Patient_ID": "INF000001",
+                "Demographics": { "Sex": "Female", "Age": 13, "Age_Group": "Pediatric (6-17)", "Weight_kg": 45, "Comorbidities": ["Heart Failure"] }
+            },
+            "encounters": [{
+                "Diagnosis": "Osteomyelitis",
+                "Vitals": { "Temperature_C": 38.2, "Heart_Rate_bpm": 101, "Respiratory_Rate": 24, "SBP_mmHg": 125, "DBP_mmHg": 64, "SpO2_percent": 97.9, "GCS": 13 },
+                "Scores": { "SOFA": 0, "qSOFA": 2 }
+            }],
+            "labs": [{
+                "Lab_Date": "2026-05-04",
+                "CBC": { "WBC_x10^9/L": 13, "Neutrophil_percent": 83.1, "Lymphocyte_percent": 13.3 },
+                "Inflammatory_Markers": { "CRP_mg/L": 97, "PCT_ng/mL": 2.4 },
+                "Chemistry": { "BUN_mg/dL": 20, "Creatinine_mg/dL": 1.29, "eGFR_mL/min/1.73m2": 49.9, "AST_U/L": 31, "ALT_U/L": 24, "Albumin_g/dL": 2.9, "Lactate_mmol/L": 1.5 }
+            }],
+            "cultures": [{ "Specimen_Type": "Pus", "Organism": "Staphylococcus aureus" }],
+            "antibiograms": [{
+                "Organism": "Staphylococcus aureus", "Phenotype": "MRSA (Methicillin-Resistant Staphylococcus aureus)",
+                "AST_Results": [
+                    { "Antibiotic_Name": "Penicillin", "MIC_Value": ">=8 ug/mL", "Interpretation": "R" },
+                    { "Antibiotic_Name": "Oxacillin", "MIC_Value": "4 ug/mL", "Interpretation": "R" }
+                ]
+            }],
+            "antibiotics": [
+                { "Type": "Empiric", "Regimen": "Vancomycin + Cefepime" },
+                { "Type": "Definitive", "Regimen": "Linezolid", "Clinical_Note": "Targeted Adjustment: Precise de-escalation to Linezolid monotherapy based on susceptibility matrix." }
+            ],
+            "outcomes": { "Clinical_Outcomes": { "ICU_Admission": true, "Length_of_Stay_Days": 20 }, "Trends": { "WBC_Trend": "Improved" } }
+        }];
+
+        let selectedPatient = globalDataset[0];
+        let currentTimeout = null;
+        const logContainer = document.getElementById('terminal-log');
+
+        window.onload = function() {
+            syncPatientUI();
+        };
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const parsedData = JSON.parse(e.target.result);
+                    if (Array.isArray(parsedData) && parsedData.length > 0) {
+                        globalDataset = parsedData;
+                        document.getElementById('upload-status').innerText = `Loaded ${globalDataset.length} clinical charts!`;
+                        document.getElementById('upload-status').className = 'text-emerald-400 font-bold text-xs px-3 font-mono';
+                        
+                        const selectEl = document.getElementById('patient-select');
+                        selectEl.innerHTML = '';
+                        globalDataset.forEach((item, index) => {
+                            const pId = item.patient?.Patient_ID || `Index_${index}`;
+                            const diag = item.encounters?.[0]?.Diagnosis || 'Unknown Diagnosis';
+                            const option = document.createElement('option');
+                            option.value = index;
+                            option.innerText = `${pId} (${diag.substring(0,12)})`;
+                            selectEl.appendChild(option);
+                        });
+
+                        selectedPatient = globalDataset[0];
+                        syncPatientUI();
+                        clearConsole();
+                        logContainer.innerHTML = `<div class="text-emerald-400">// [Data Stream Initialized] Connected to imported EHR dataset. Choose a case file and click timeline phases to simulate workflow.</div>`;
+                    }
+                } catch (err) {
+                    alert('Failed to parse JSON dataset. Verify formatting schema.');
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function onPatientChange(event) {
+            try {
+                const idx = event.target.value;
+                selectedPatient = globalDataset[idx];
+                syncPatientUI();
+                clearConsole();
+                logContainer.innerHTML = `<div class="text-blue-400">// Switched workspace context to Patient MRN: ${selectedPatient.patient?.Patient_ID || 'Unknown'}. Telemetry panels synchronized.</div>`;
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        function syncPatientUI() {
+            try {
+                const p = selectedPatient.patient || {};
+                const enc = selectedPatient.encounters?.[0] || {};
+                const lab = selectedPatient.labs?.[0] || { CBC:{}, Inflammatory_Markers:{}, Chemistry:{} };
+                const cult = selectedPatient.cultures?.[0] || {};
+                const out = selectedPatient.outcomes?.Clinical_Outcomes || {};
+
+                let sexZh = '-';
+                if(p.Demographics?.Sex === 'Female') sexZh = 'F';
+                else if(p.Demographics?.Sex === 'Male') sexZh = 'M';
+
+                document.getElementById('md-p-id').innerText = p.Patient_ID || 'N/A';
+                document.getElementById('md-p-demog').innerText = `${p.Demographics?.Age || '-'} yo / Weight: ${p.Demographics?.Weight_kg || '-'} kg / Sex: ${sexZh}`;
+                document.getElementById('md-p-diag').innerText = enc.Diagnosis || 'N/A';
+                document.getElementById('md-p-comorb').innerText = p.Demographics?.Comorbidities?.join(', ') || 'No significant historical comorbidities';
+
+                document.getElementById('ns-temp').innerText = enc.Vitals?.Temperature_C || 'N/A';
+                document.getElementById('ns-hr').innerText = enc.Vitals?.Heart_Rate_bpm || 'N/A';
+                document.getElementById('ns-rr').innerText = enc.Vitals?.Respiratory_Rate || 'N/A';
+                document.getElementById('ns-spo2').innerText = enc.Vitals?.SpO2_percent || 'N/A';
+                document.getElementById('ns-gcs').innerText = enc.Vitals?.GCS || 'N/A';
+                document.getElementById('ns-qsofa').innerText = enc.Scores?.qSOFA !== undefined ? enc.Scores.qSOFA : 'N/A';
+
+                document.getElementById('mt-specimen').innerText = cult.Specimen_Type || 'Unspecified';
+                document.getElementById('mt-organism').innerText = cult.Organism || 'No growth detected';
+
+                document.getElementById('ph-cr').innerText = lab.Chemistry ? `${lab.Chemistry["Creatinine_mg/dL"] || 'N/A'} mg/dL` : 'N/A';
+                document.getElementById('ph-egfr').innerText = lab.Chemistry ? `${lab.Chemistry["eGFR_mL/min/1.73m2"] || 'N/A'} mL/min` : 'N/A';
+                document.getElementById('ph-bun').innerText = lab.Chemistry ? (lab.Chemistry["BUN_mg/dL"] || 'N/A') : 'N/A';
+                document.getElementById('ph-alb').innerText = lab.Chemistry ? (lab.Chemistry["Albumin_g/dL"] || 'N/A') : 'N/A';
+
+                document.getElementById('id-icu').innerText = out.ICU_Admission ? 'Yes (Trigger ICU Protocol)' : 'General Floor Cohort';
+                document.getElementById('id-los').innerText = out.Length_of_Stay_Days || '-';
+                document.getElementById('id-mortality').innerText = selectedPatient.outcomes?.Trends?.WBC_Trend === 'Improved' ? 'Favorable Prognosis (Physiology Stabilizing)' : 'Elevated Risk (Requires continuous hemodynamic monitoring)';
+            } catch (err) {
+                console.error("Error during UI synchronization: ", err);
+            }
+        }
+
+        function clearConsole() {
+            logContainer.innerHTML = '<div class="text-slate-500">// Console logs cleared.</div>';
+            resetHighlights();
+            if(currentTimeout) clearTimeout(currentTimeout);
+        }
+
+        function resetHighlights() {
+            document.querySelectorAll('.agent-active, .human-active').forEach(el => {
+                el.classList.remove('agent-active', 'human-active');
+            });
+        }
+
+        function runPhase(phaseNum) {
+            clearConsole();
+            
+            const pId = selectedPatient.patient?.Patient_ID || 'N/A';
+            const enc = selectedPatient.encounters?.[0] || {};
+            const cult = selectedPatient.cultures?.[0] || {};
+            const lab = selectedPatient.labs?.[0] || { CBC:{}, Inflammatory_Markers:{}, Chemistry:{} };
+            const empiricRx = selectedPatient.antibiotics?.[0]?.Regimen || 'Broad-spectrum empiric course';
+            const definitiveRx = selectedPatient.antibiotics?.[1]?.Regimen || 'Targeted de-escalated therapy';
+            const clinicalNote = selectedPatient.antibiotics?.[1]?.Clinical_Note || 'No clinical remarks noted.';
+
+            const bloodWbc = lab.CBC ? (lab.CBC["WBC_x10^9/L"] || 'N/A') : 'N/A';
+            const bloodNeut = lab.CBC ? (lab.CBC["Neutrophil_percent"] || 'N/A') : 'N/A';
+            const bloodLymph = lab.CBC ? (lab.CBC["Lymphocyte_percent"] || 'N/A') : 'N/A';
+            const markerCrp = lab.Inflammatory_Markers ? (lab.Inflammatory_Markers["CRP_mg/L"] || 'N/A') : 'N/A';
+            const markerPct = lab.Inflammatory_Markers ? (lab.Inflammatory_Markers["PCT_ng/mL"] || 'Not Tested') : 'Not Tested';
+            const chemBun = lab.Chemistry ? (lab.Chemistry["BUN_mg/dL"] || 'N/A') : 'N/A';
+            const chemCr = lab.Chemistry ? (lab.Chemistry["Creatinine_mg/dL"] || 'N/A') : 'N/A';
+            const chemEgfr = lab.Chemistry ? (lab.Chemistry["eGFR_mL/min/1.73m2"] || 'N/A') : 'N/A';
+            const chemLactate = lab.Chemistry ? (lab.Chemistry["Lactate_mmol/L"] || 'N/A') : 'N/A';
+            const chemAst = lab.Chemistry ? (lab.Chemistry["AST_U/L"] || 'N/A') : 'N/A';
+            const chemAlt = lab.Chemistry ? (lab.Chemistry["ALT_U/L"] || 'N/A') : 'N/A';
+
+            const demo = selectedPatient.patient?.Demographics || {};
+            const age = demo.Age || 0;
+            const weight = demo.Weight_kg || 45;
+            const comorbidities = demo.Comorbidities?.join(', ') || 'No significant historical comorbidities';
+
+            let ageGroupTitle = "Adult Patient";
+            let dosageTypeTitle = "Standard Adult & Organ-Adjusted Dosing";
+            let cohortContext = "adult physiological parameters";
+            
+            if (age <= 17) {
+                ageGroupTitle = "Pediatric Patient";
+                dosageTypeTitle = "Pediatric Weight-Based Dosing (mg/kg)";
+                cohortContext = "pediatric developmental constraints";
+            } else if (age >= 65) {
+                ageGroupTitle = "Geriatric Patient";
+                dosageTypeTitle = "Geriatric Adjusted Renal-Dosing";
+                cohortContext = "geriatric physiological decline and organ compensation limits";
+            }
+
+            let phaseEvents = [];
+
+            if (phaseNum === 1) {
+                logContainer.innerHTML = `<div class="text-blue-400 font-bold border-b border-blue-900/45 pb-1">--- Launching Phase 1: Empiric Coverage & Historical Record Alignment (MRN: ${pId}) ---</div>`;
+                phaseEvents = [
+                    { type: 'human', id: 'human-nurse', text: `[Frontline RN Alert] Patient presents with severe systemic distress symptoms. Primary Diagnosis: ${enc.Diagnosis || 'Infectious Process'}. Current objective core temperature: ${enc.Vitals?.Temperature_C || 38}°C.` },
+                    { type: 'human', id: 'human-nurse', text: `[Microbiology Sampling] Strictly enforcing Antimicrobial Stewardship Program (ASP) protocol: obtained standard "${cult.Specimen_Type || 'Blood/Urine'}" cultures prior to administering the initial first dose of empiric therapy.` },
+                    { type: 'agent', id: 'agent-ehr', text: `[EHR Structuring Agent] Automatically query data pipes to scan the preceding 90-day chart timeline for positive cultures, historical isolation footprints, and specific drug allergies.` },
+                    { type: 'visual-antibiogram', id: 'agent-ehr', text: '' },
+                    { type: 'human', id: 'human-md', text: `[Physician Order Entry] Reviewing historical culture readouts and susceptibility trends surfaced by the [EHR Structuring Agent], ordered the initial broad-spectrum empiric regimen: <span class="text-yellow-400 font-bold">${empiricRx}</span>.` },
+                    { type: 'agent', id: 'agent-physio', text: `[Physiological Profiling Agent] Successfully processed demographic vectors: Patient is a ${age}-year-old ${ageGroupTitle}, weighing ${weight} kg, with a chronic background of [${comorbidities}].` },
+                    { type: 'visual-physio-bundle', id: 'agent-physio', text: '' },
+                    { type: 'human', id: 'human-pharmacist', text: `[Clinical Pharmacist Review] Evaluating PK/PD parameters provided by the [Physiological Profiling Agent], verified the selected broad-spectrum regimen's alignment with ${dosageTypeTitle} limits, approving safe pharmacy dispensing.` }
+                ];
+            } else if (phaseNum === 2) {
+                logContainer.innerHTML = `<div class="text-blue-400 font-bold border-b border-blue-900/45 pb-1">--- Launching Phase 2: Rapid Microbiological Mass Spec Identification & Multi-Organ Barrier Controls (MRN: ${pId}) ---</div>`;
+                
+                const isPediatric = age <= 17;
+                const isGeriatric = age >= 65;
+                const hasHeartFailure = demo.Comorbidities?.includes("Heart Failure");
+
+                let safetyAlertText = "";
+                if (isPediatric && chemCr > 1.0) {
+                    safetyAlertText += `<span class="text-red-400 font-bold">【CRITICAL PEDIATRIC ALERT】</span> Patient is ${age} years old (${weight} kg). Current Serum Creatinine is ${chemCr} mg/dL, significantly exceeding typical baseline distributions for this pediatric cohort!`;
+                } else if (isGeriatric && (chemEgfr < 60 || chemCr > 1.2)) {
+                    safetyAlertText += `<span class="text-red-400 font-bold">【CRITICAL GERIATRIC ALERT】</span> Patient is ${age} years old. Current Estimated eGFR is ${chemEgfr} mL/min with Serum Cr of ${chemCr} mg/dL, indicating severe drug clearance latency and profound threat of compound toxic accumulation!`;
+                } else if (chemCr > 1.4) {
+                    safetyAlertText += `<span class="text-red-400 font-bold">【ACUTE KIDNEY INJURY RISK ALERT】</span> Current baseline Serum Creatinine sits at ${chemCr} mg/dL, exceeding typical physiological boundaries and pointing to latent AKI risk metrics!`;
+                }
+
+                if (hasHeartFailure) {
+                    safetyAlertText += ` Concurrent low-output <span class="text-amber-400 font-bold">Heart Failure history</span> detected, which, along with active hypoxia profiles, severely exacerbates renal medullary perfusion hypoxemia.`;
+                }
+
+                phaseEvents = [
+                    { type: 'human', id: 'human-mt', text: `[Microbiology Lab Notification] Rapid identification processing complete. MALDI-TOF mass spectrometry isolates critical active pathogen: <span class="text-amber-400 italic font-bold">${cult.Organism || 'Bacterial isolate'}</span>.` },
+                    { type: 'visual-lab-bundle', id: 'agent-ehr', text: JSON.stringify({ bloodWbc, bloodNeut, bloodLymph, markerCrp, markerPct, chemBun, chemCr, chemEgfr, chemLactate, chemAst, chemAlt }) },
+                    { type: 'agent', id: 'agent-trend', text: `[AMR Context Agent] Linked mass spec data feeds with current active ward-level epidemiological resistome matrices to compute the localized mathematical risk weight of Multi-Drug Resistant Organisms (MDRO).` },
+                    { type: 'agent', id: 'agent-rag', text: `[Guideline Validation Agent] Launched high-dimensional vector RAG querying to map cross-sectional acute inflammatory indices against the latest Surviving Sepsis Guidelines.` },
+                    { type: 'agent', id: 'agent-safety', text: `[Safety Review Agent (Dynamic Gate)] Core safety verification locked! ${safetyAlertText} <br><span class="text-red-500 font-bold">🚫 Triggered Deterministic Clinical Hard Stop Rule:</span> Intercepted standard automated LLM de-escalation scripts to apply final safety veto power. Hard warning issued to the team: <span class="underline">Maintaining or initiating potential nephrotoxic molecules (e.g., Vancomycin / Aminoglycosides) at this juncture requires mandatory immediate trough TDM monitoring or structural dosing reductions to prevent precipitating severe Acute Kidney Injury (AKI).</span>` },
+                    { type: 'human', id: 'human-md', text: `[Clinical Team Sign-off] The attending physician and consulting ID specialist reviewed the high-risk clearance vectors flagged by the [Safety Review Agent], confirming that ${cohortContext} and heart failure constraints mandate immediate prescription override and dose restriction, steering toward safe definitive therapy.` }
+                ];
+            } else if (phaseNum === 3) {
+                logContainer.innerHTML = `<div class="text-blue-400 font-bold border-b border-blue-900/45 pb-1">--- Launching Phase 3: Phenotypic Antimicrobial Susceptibility Profiling & Precision De-escalation (MRN: ${pId}) ---</div>`;
+                phaseEvents = [
+                    { type: 'human', id: 'human-mt', text: `[Microbiology Report Finalized] Complete 48-72 hour phenotypic Antimicrobial Susceptibility Testing (AST) and Minimum Inhibitory Concentration (MIC) matrices fully indexed in the EHR system.` },
+                    { type: 'agent', id: 'agent-ast', text: `[AST Interpretation Agent] Parsed unstructured textual laboratory arrays, standardizing values to an explicit boolean S-I-R clinical decision matrix.` },
+                    { type: 'agent', id: 'agent-rag', text: `[Guideline Validation Agent] Cross-referenced localized phenotypes against clinical guidelines, generating a precise, targeted de-escalation therapy suggestion: <span class="text-emerald-400 font-bold">${definitiveRx}</span>.` },
+                    { type: 'human', id: 'human-id', text: `[ID Specialist Attestation] Meticulously verified the "RAG Clinical Guideline Evidence Citation Chain" compiled by the agent workflow, applying electronic signature to approve precision targeted consultation directives.` },
+                    { type: 'human', id: 'human-pharmacist', text: `[Clinical Pharmacist TDM Monitoring] Executing continuous surveillance on drug troughs and clearance metrics, provides kinetic feedback and advises the provider team on the optimal window for intravenous-to-oral (IV-to-PO) conversion.` },
+                    { type: 'agent', id: 'agent-feedback', text: `[Feedback & Logging Agent] Encapsulated, packed, and committed the complete multi-agent interaction log (Agent Trace) to the institutional audit server.<br><span class="text-slate-400 text-[11px] block mt-1.5 bg-slate-900 p-2.5 rounded-lg border border-slate-800"><b>EHR Recorded Clinical Note:</b> ${clinicalNote}</span>` }
+                ];
+            }
+
+            executeEventStep(phaseEvents, 0);
+        }
+
+        function executeEventStep(events, index) {
+            if (index >= events.length) {
+                const endDiv = document.createElement('div');
+                endDiv.className = 'text-slate-500 font-bold pt-2 border-t border-slate-900 log-entry';
+                endDiv.innerHTML = `// [Simulation Concluded] Heterogeneous multi-source clinical data stream trace successfully completed under HL7 / FHIR Schema compliance constraints.`;
+                logContainer.appendChild(endDiv);
+                logContainer.scrollTop = logContainer.scrollHeight;
+                return;
+            }
+
+            const ev = events[index];
+            resetHighlights();
+
+            const element = document.getElementById(ev.id);
+            if (element) {
+                if (ev.type === 'human') element.classList.add('human-active');
+                if (ev.type === 'agent') element.classList.add('agent-active');
+            }
+
+            const logDiv = document.createElement('div');
+            logDiv.className = 'log-entry space-y-1';
+            const timestamp = new Date().toLocaleTimeString();
+
+            if (ev.type === 'visual-antibiogram') {
+                const abData = selectedPatient.antibiograms?.[0] || { AST_Results: [] };
+                let rowsHtml = '';
+                
+                if (abData.AST_Results && abData.AST_Results.length > 0) {
+                    abData.AST_Results.forEach(r => {
+                        const interpretColor = r.Interpretation === 'R' ? 'text-red-400 font-bold' : 'text-emerald-400 font-bold';
+                        let interpretZh = r.Interpretation;
+                        if(r.Interpretation === 'R') interpretZh = 'R (Resistant)';
+                        else if(r.Interpretation === 'S') interpretZh = 'S (Susceptible)';
+                        else if(r.Interpretation === 'I') interpretZh = 'I (Intermediate)';
+
+                        rowsHtml += `
+                            <tr class="border-b border-slate-800 hover:bg-slate-800/40 transition-colors">
+                                <td class="p-2 text-left text-slate-300 font-medium">${r.Antibiotic_Name}</td>
+                                <td class="p-2 ${interpretColor}">${interpretZh}</td>
+                                <td class="p-2 text-slate-400">${r.MIC_Value || '-'}</td>
+                            </tr>
+                        `;
+                    });
+                } else {
+                    rowsHtml = `<tr><td colspan="3" class="p-3 text-slate-500 italic">No historical microbiology culture datasets recovered for this chart profile.</td></tr>`;
+                }
+
+                logDiv.innerHTML = `
+                    <div class="flex gap-2 text-amber-400 items-start">
+                        <span class="text-slate-600 font-normal">[${timestamp}]</span>
+                        <span class="font-bold">[Historical Antibiogram Profile Summary]</span>
+                        <span class="flex-1">EHR Structuring Agent dynamically rendering patient antimicrobial history within a 90-day window:</span>
+                    </div>
+                    <div class="ml-8 my-2.5 bg-slate-900 border border-amber-500/20 rounded-xl p-3 max-w-md shadow-lg">
+                        <div class="text-slate-400 text-[11px] mb-2 font-semibold">Historically Isolated Genus/Strain: <span class="italic text-amber-400 font-bold">${abData.Organism || 'N/A'}</span> (${abData.Phenotype || 'Wild-type variant'})</div>
+                        <table class="w-full text-[11px] border-collapse font-mono">
+                            <thead>
+                                <tr class="bg-slate-950 text-slate-400 text-[10px] uppercase tracking-wider">
+                                    <th class="p-2 text-left rounded-l-md">Antibiotic Name</th>
+                                    <th class="p-2 text-center">Interpretation (INT)</th>
+                                    <th class="p-2 text-center rounded-r-md">MIC Boundary</th>
+                                </tr>
+                            </thead>
+                            <tbody>${rowsHtml}</tbody>
+                        </table>
+                    </div>
+                `;
+            } 
+            else if (ev.type === 'visual-physio-bundle') {
+                const p = selectedPatient.patient || {};
+                const demo = p.Demographics || {};
+                let sexZh = demo.Sex === 'Female' ? 'F' : (demo.Sex === 'Male' ? 'M' : '-');
+                
+                let pkPdTipsHtml = "";
+                if (demo.Age <= 17) {
+                    pkPdTipsHtml = `1. Patient maps within a <span class="text-emerald-400 font-bold">pediatric cohort</span>; metabolic clearance parameters and visceral tissue distributions vary drastically from typical adult templates—requires strict calculation based on exact <span class="text-emerald-400 font-bold">mg/kg</span> equations.<br>`;
+                } else if (demo.Age >= 65) {
+                    pkPdTipsHtml = `1. Patient maps within a <span class="text-amber-400 font-bold">geriatric cohort</span>; physiological adipose expansion, sarcopenia trends, and reduced renal plasma flux significantly alter the volume of distribution (Vd) of hydrophilic agents, elevating cumulative systemic drug toxicity metrics.<br>`;
+                } else {
+                    pkPdTipsHtml = `1. Patient maps within a <span class="text-blue-400 font-bold">standard adult cohort</span>; follow standard body surface area (BSA) equations and institutional adult stewardship guidelines, monitoring for weight anomalies to mitigate extreme dosing bias.<br>`;
+                }
+
+                logDiv.innerHTML = `
+                    <div class="flex gap-2 text-blue-400 items-start">
+                        <span class="text-slate-600 font-normal">[${timestamp}]</span>
+                        <span class="font-bold">[Physiological & PK/PD Profiling Summary]</span>
+                        <span class="flex-1">Agent automatically consolidated critical metrics for the clinical pharmacist's review:</span>
+                    </div>
+                    <div class="ml-8 my-2.5 bg-slate-900 border border-blue-500/20 rounded-xl p-3.5 max-w-md shadow-lg text-[11px]">
+                        <div class="grid grid-cols-2 gap-2 font-mono mb-2 border-b border-slate-800 pb-2">
+                            <div>Demographics: <span class="text-white font-bold">${demo.Age || '-'} yo (${sexZh})</span></div>
+                            <div>Estimated Weight: <span class="text-white font-bold">${demo.Weight_kg || 45} kg</span></div>
+                            <div class="col-span-2">Comorbidities: <span class="text-amber-400 font-bold">${demo.Comorbidities?.join(', ') || 'No significant comorbidities recorded'}</span></div>
+                        </div>
+                        <div class="text-slate-400 leading-relaxed bg-slate-950 p-2.5 rounded border border-slate-800">
+                            <span class="text-red-400 font-bold">💡 Pharmacist PK/PD Guidance Panel:</span><br>
+                            ${pkPdTipsHtml}
+                            2. Heart Failure comorbidity detected; remain highly vigilant for hydrophilic antibiotic fluid retention anomalies or expansion of distribution volume (Vd) causing initial sub-therapeutic loading or late clearance latency.
+                        </div>
+                    </div>
+                `;
+            }
+            else if (ev.type === 'visual-lab-bundle') {
+                const d = JSON.parse(ev.text);
+                logDiv.innerHTML = `
+                    <div class="flex gap-2 text-blue-400 items-start">
+                        <span class="text-slate-600 font-normal">[${timestamp}]</span>
+                        <span class="font-bold">[Laboratory Data Bundle Injected]</span>
+                        <span class="flex-1">Parallel synchronization of standard core diagnostic routine panels (Lab Bundle):</span>
+                    </div>
+                    <div class="ml-8 my-2.5 bg-slate-900 border border-blue-500/20 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs max-w-xl shadow-lg">
+                        <div class="sm:border-r border-slate-800 sm:pr-3">
+                            <span class="text-blue-400 font-bold block mb-1.5 border-b border-slate-800 pb-1">🩸 CBC & Inflammatory Markers</span>
+                            <ul class="space-y-1 text-slate-300 text-[11px]">
+                                <div class="flex justify-between"><span>WBC Count:</span><span class="text-red-400 font-bold">${d.bloodWbc} x10^9/L</span></div>
+                                <div class="flex justify-between"><span>Neutrophils (%):</span><span class="text-amber-400">${d.bloodNeut} %</span></div>
+                                <div class="flex justify-between"><span>Lymphocytes (%):</span><span class="text-slate-400">${d.bloodLymph} %</span></div>
+                                <div class="flex justify-between"><span>C-Reactive Protein (CRP):</span><span class="text-red-400 font-bold">${d.markerCrp} mg/L</span></div>
+                                <div class="flex justify-between"><span>Procalcitonin (PCT):</span><span class="text-amber-300">${d.markerPct} ng/mL</span></div>
+                            </ul>
+                        </div>
+                        <div>
+                            <span class="text-blue-400 font-bold block mb-1.5 border-b border-slate-800 pb-1">🧪 Chemistry & Metabolic Organ Panels</span>
+                            <ul class="space-y-1 text-slate-300 text-[11px]">
+                                <div class="flex justify-between"><span>BUN / Serum Cr:</span><span class="text-amber-300">${d.chemBun} / ${d.chemCr} mg/dL</span></div>
+                                <div class="flex justify-between"><span>Estimated eGFR:</span><span class="text-emerald-400 font-bold">${d.chemEgfr} mL/min</span></div>
+                                <div class="flex justify-between"><span>Blood Lactate:</span><span class="text-red-400 font-bold">${d.chemLactate} mmol/L</span></div>
+                                <div class="flex justify-between"><span>Hepatic Enzymes (AST/ALT):</span><span class="text-slate-400">${d.chemAst} / ${d.chemAlt} U/L</span></div>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+            } 
+            else {
+                const isHuman = ev.type === 'human';
+                logDiv.className = `log-entry flex gap-2 items-start ${isHuman ? 'text-emerald-300' : 'text-blue-300'}`;
+                const badgeColor = isHuman ? 'text-emerald-500' : 'text-blue-500';
+                const badge = isHuman ? '[Clinical Team]' : '[AI Agent]';
+                logDiv.innerHTML = `
+                    <span class="text-slate-600 font-normal">[${timestamp}]</span>
+                    <span class="${badgeColor} font-bold whitespace-nowrap">${badge}</span>
+                    <span class="flex-1 text-slate-200">${ev.text}</span>
+                `;
+            }
+            
+            logContainer.appendChild(logDiv);
+            logContainer.scrollTop = logContainer.scrollHeight;
+
+            currentTimeout = setTimeout(() => {
+                executeEventStep(events, index + 1);
+            }, 2000);
+        }
+    </script>
+</body>
+</html>
