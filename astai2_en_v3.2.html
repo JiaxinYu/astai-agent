@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Antibiotic Stewardship Multi-Agent & Synthetic Data Integration Simulation System v3.2</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        /* 升級版動態提示：更平滑的微發光外框，降低視覺突兀感 */
+        .agent-active { 
+            animation: agentGlow 2.5s infinite; 
+            border-color: #60a5fa !important; 
+            background-color: rgba(30, 41, 59, 0.7) !important;
+        }
+        .human-active { 
+            animation: humanGlow 2.5s infinite; 
+            border-color: #34d399 !important; 
+            background-color: rgba(30, 41, 59, 0.7) !important;
+        }
+        @keyframes agentGlow {
+            0%, 100% { box-shadow: 0 0 0 0px rgba(59, 130, 246, 0); }
+            50% { box-shadow: 0 0 16px 2px rgba(59, 130, 246, 0.4); border-color: #3b82f6; }
+        }
+        @keyframes humanGlow {
+            0%, 100% { box-shadow: 0 0 0 0px rgba(16, 185, 129, 0); }
+            50% { box-shadow: 0 0 16px 2px rgba(16, 185, 129, 0.4); border-color: #10b981; }
+        }
+        .log-entry { opacity: 0; transform: translateY(8px); animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
+        
+        /* 隱藏滾動條但保持功能 */
+        .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+        .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+        .scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #475569; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen font-sans antialiased selection:bg-blue-500/30 selection:text-blue-200">
+
+    <header class="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 p-4 sticky top-0 z-50 shadow-xl">
+        <div class="max-w-7xl mx-auto flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+            <div>
+                <span class="bg-blue-500/10 text-blue-400 text-[10px] font-bold px-2.5 py-1 rounded border border-blue-500/20 uppercase tracking-widest">
+                    Synthetic Data Integration Edition
+                </span>
+                <h1 class="text-xl font-extrabold mt-1.5 text-white tracking-tight">
+                    Antibiotic Stewardship Decision Support System <span class="text-slate-400 font-normal text-lg ml-2">| Multi-Agent Panel</span>
+                </h1>
+            </div>
+            
+            <div class="flex flex-wrap items-center gap-3 w-full xl:w-auto justify-end">
+                <div class="flex items-center bg-slate-950 rounded-xl p-1 border border-slate-800">
+                    <label class="cursor-pointer bg-slate-800 hover:bg-slate-700 text-white text-xs px-3.5 py-2 rounded-lg font-medium transition-all shadow-sm">
+                        Upload Dataset (.json)
+                        <input type="file" id="file-input" class="hidden" accept=".json" onchange="handleFileUpload(event)">
+                    </label>
+                    <span id="upload-status" class="text-slate-500 text-xs px-3 font-mono max-w-[220px] truncate">No file uploaded (Using default built-in case)</span>
+                </div>
+
+                <div class="flex items-center gap-2 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-xl">
+                    <label class="text-xs font-bold text-slate-400 whitespace-nowrap">Patient:</label>
+                    <select id="patient-select" onchange="onPatientChange(event)" class="bg-slate-950 text-slate-200 rounded-lg px-2 py-1 text-xs border border-slate-700 font-mono focus:outline-none focus:border-blue-500 w-44">
+                        <option value="0">INF000001 (Default)</option>
+                    </select>
+                </div>
+
+                <div class="flex gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                    <button onclick="runPhase(1)" id="btn-p1" class="px-3 py-2 bg-slate-900 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-semibold transition-all text-slate-300 border border-transparent hover:border-blue-500 shadow">0-24h Empiric</button>
+                    <button onclick="runPhase(2)" id="btn-p2" class="px-3 py-2 bg-slate-900 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-semibold transition-all text-slate-300 border border-transparent hover:border-blue-500 shadow">24-48h Mass Spec</button>
+                    <button onclick="runPhase(3)" id="btn-p3" class="px-3 py-2 bg-slate-900 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-semibold transition-all text-slate-300 border border-transparent hover:border-blue-500 shadow">48-72h Susceptibility</button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        
+        <section class="lg:col-span-3 flex flex-col gap-4">
+            <h2 class="text-xs font-bold tracking-widest text-emerald-400 uppercase border-b border-emerald-950 pb-2 flex items-center gap-2">
+                <span class="w-1.5 h-3 bg-emerald-500 rounded-full"></span>Clinical Team (Humans)
+            </h2>
+            
+            <div id="human-md" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-start gap-2 mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">Attending / Resident MD</span>
+                    <span class="text-[9px] text-emerald-400 px-2 py-0.5 bg-emerald-950/40 rounded border border-emerald-800/60 font-medium whitespace-nowrap">Prescribing Authority</span>
+                </div>
+                <div class="text-xs text-slate-300 space-y-1.5 font-mono">
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>ID:</span> <span id="md-p-id" class="text-amber-400 font-bold">-</span></div>
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>Demog:</span> <span id="md-p-demog" class="text-slate-200">-</span></div>
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>Primary Diag:</span> <span id="md-p-diag" class="text-red-400 font-bold text-right truncate max-w-[140px]">-</span></div>
+                    <div class="text-slate-400 text-[11px] pt-0.5">Comorbidities: <span id="md-p-comorb" class="text-slate-300 block mt-0.5 font-sans leading-relaxed">-</span></div>
+                </div>
+            </div>
+
+            <div id="human-nurse" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">Clinical Nurse</span>
+                    <span class="text-[9px] text-emerald-400 px-2 py-0.5 bg-emerald-950/40 rounded border border-emerald-800/60 font-medium">Vitals Monitoring</span>
+                </div>
+                <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs text-slate-300 font-mono">
+                    <div class="border-b border-slate-800/50 pb-1">Temp: <span id="ns-temp" class="text-white font-semibold">-</span>°C</div>
+                    <div class="border-b border-slate-800/50 pb-1">HR: <span id="ns-hr" class="text-white font-semibold">-</span> bpm</div>
+                    <div class="border-b border-slate-800/50 pb-1">RR: <span id="ns-rr" class="text-white font-semibold">-</span>/m</div>
+                    <div class="border-b border-slate-800/50 pb-1">SpO2: <span id="ns-spo2" class="text-white font-semibold">-</span>%</div>
+                    <div class="pt-1">GCS: <span id="ns-gcs" class="text-amber-400 font-bold">-</span></div>
+                    <div class="pt-1">qSOFA: <span id="ns-qsofa" class="text-red-400 font-bold">-</span></div>
+                </div>
+            </div>
+
+            <div id="human-mt" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">Medical Technologist</span>
+                    <span class="text-[9px] text-emerald-400 px-2 py-0.5 bg-emerald-950/40 rounded border border-emerald-800/60 font-medium">MALDI-TOF Mass Spec</span>
+                </div>
+                <div class="text-xs text-slate-300 space-y-1 font-mono">
+                    <div class="flex justify-between"><span>Specimen:</span> <span id="mt-specimen" class="text-blue-400 font-medium">-</span></div>
+                    <div class="mt-1 pt-1 border-t border-slate-800/50">
+                        <span class="text-slate-400 block text-[11px]">Organism ID:</span>
+                        <span id="mt-organism" class="text-amber-400 font-bold italic text-sm mt-0.5 block">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="human-pharmacist" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">Clinical Pharmacist</span>
+                    <span class="text-[9px] text-emerald-400 px-2 py-0.5 bg-emerald-950/40 rounded border border-emerald-800/60 font-medium">TDM & Renal Calculation</span>
+                </div>
+                <div class="text-xs text-slate-300 space-y-1.5 font-mono">
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>Creatinine:</span> <span id="ph-cr" class="text-red-400 font-bold">- mg/dL</span></div>
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>eGFR:</span> <span id="ph-egfr" class="text-emerald-400 font-bold">- mL/min</span></div>
+                    <div class="flex justify-between text-[11px] text-slate-400 pt-0.5">
+                        <span>BUN: <span id="ph-bun" class="text-slate-200 font-sans">-</span></span>
+                        <span>Alb: <span id="ph-alb" class="text-slate-200 font-sans">-</span></span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="human-id" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">Infectious Disease MD</span>
+                    <span class="text-[9px] text-emerald-400 px-2 py-0.5 bg-emerald-950/40 rounded border border-emerald-800/60 font-medium">Stewardship Control</span>
+                </div>
+                <div class="text-xs text-slate-300 space-y-1.5 font-mono">
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>ICU Admission:</span> <span id="id-icu" class="font-bold text-amber-400">-</span></div>
+                    <div class="flex justify-between border-b border-slate-800/50 pb-1"><span>Length of Stay:</span> <span id="id-los" class="text-blue-400 font-bold">- days</span></div>
+                    <div class="text-[11px] text-slate-400 pt-0.5">Prognosis: <span id="id-mortality" class="text-slate-200 block font-sans mt-0.5 leading-tight">-</span></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="lg:col-span-6 flex flex-col bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl min-h-[650px] self-stretch">
+            <div class="bg-slate-950 px-4 py-3 border-b border-slate-800 flex justify-between items-center">
+                <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-red-500/80"></span>
+                    <span class="w-2.5 h-2.5 rounded-full bg-yellow-500/80"></span>
+                    <span class="w-2.5 h-2.5 rounded-full bg-green-500/80"></span>
+                    <span class="text-xs font-mono text-slate-400 ml-2 tracking-wide">DATA_ORCHESTRATOR_BUS // Pipeline Safe Stable v3.2</span>
+                </div>
+                <button onclick="clearConsole()" class="text-xs text-slate-400 hover:text-white transition-colors bg-slate-900 px-2.5 py-1 rounded-md border border-slate-800 hover:border-slate-700">Clear Console</button>
+            </div>
+            
+            <div id="terminal-log" class="p-4 flex-1 overflow-y-auto font-mono text-xs space-y-3.5 scrollbar-thin bg-slate-950/40 leading-relaxed text-slate-300">
+                <div class="text-slate-500 italic">// System Ready. Please click "Upload Dataset (.json)" on the top left to load a synthetic clinical case, then select a phase button on the top right to simulate.</div>
+            </div>
+
+            <div class="bg-slate-950 p-3.5 border-t border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 text-xs">
+                <div class="flex items-center gap-4 flex-wrap text-slate-400">
+                    <div>Architecture: <span class="text-blue-400 font-semibold">HL7 / FHIR Adapter</span></div>
+                    <div class="hidden sm:inline text-slate-700">|</div>
+                    <div>Clinical Audit: <span class="text-amber-400 font-semibold">Deterministic Safety Gate</span></div>
+                </div>
+                <div class="flex items-center gap-2 text-emerald-400 font-medium text-[11px] bg-emerald-950/30 px-2.5 py-1 rounded-full border border-emerald-900/50">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                    <span>Secure Sandbox Operating</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="lg:col-span-3 flex flex-col gap-4">
+            <h2 class="text-xs font-bold tracking-widest text-blue-400 uppercase border-b border-blue-950 pb-2 flex items-center gap-2">
+                <span class="w-1.5 h-3 bg-blue-500 rounded-full"></span>Task-Oriented AI Agents
+            </h2>
+            
+            <div id="agent-ehr" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">EHR Structuring Agent</span>
+                    <span class="text-[9px] text-blue-400 px-2 py-0.5 bg-blue-950/40 rounded border border-blue-800/60 font-medium">Data Pipeline</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">Extracts positive culture history within 90 days to dynamically build a personalized antibiogram profile.</p>
+            </div>
+
+            <div id="agent-ast" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">AST Interpretation Agent</span>
+                    <span class="text-[9px] text-blue-400 px-2 py-0.5 bg-blue-950/40 rounded border border-blue-800/60 font-medium">Phenotype Analysis</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">Parses lab cultures and MIC values, automatically aligning with S-I-R susceptibility constraints.</p>
+            </div>
+
+            <div id="agent-trend" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">AMR Context Agent</span>
+                    <span class="text-[9px] text-blue-400 px-2 py-0.5 bg-blue-950/40 rounded border border-blue-800/60 font-medium">Trend Correlation</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">Dynamically links hospital MDRO prevalence trends with patient-specific tolerance factors for weighted computation.</p>
+            </div>
+
+            <div id="agent-rag" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">Guideline Verification Agent</span>
+                    <span class="text-[9px] text-blue-400 px-2 py-0.5 bg-blue-950/40 rounded border border-blue-800/60 font-medium">Evidence Chain</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">Uses high-dimensional vector RAG to retrieve the latest clinical society guidelines and de-escalation logic.</p>
+            </div>
+
+            <div id="agent-safety" class="bg-slate-900/60 border border-amber-900/60 p-4 rounded-xl transition-all shadow-md hover:border-amber-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">Safety Review Agent</span>
+                    <span class="text-[9px] text-amber-400 px-2 py-0.5 bg-amber-950/40 rounded border border-amber-800/60 font-medium">Core Gatekeeper</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">Prevents LLM hallucinations. Employs hard, structured physiological constraints to exercise veto power over LLM outputs.</p>
+            </div>
+
+            <div id="agent-feedback" class="bg-slate-900/60 border border-slate-800 p-4 rounded-xl transition-all shadow-md hover:border-slate-700">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-bold text-white text-sm tracking-tight">Clinical Feedback Agent</span>
+                    <span class="text-[9px] text-blue-400 px-2 py-0.5 bg-blue-950/40 rounded border border-blue-800/60 font-medium">Audit Logs</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">Fully logs Agent Trace interactions and clinician overrides/modifications for audit tracking.</p>
+            </div>
+        </section>
+    </main>
+
+
+    <script>
+        // Default built-in safe fallback dataset
+        let globalDataset = [{
+            "patient": {
+                "Patient_ID": "INF000001",
+                "Demographics": { "Sex": "Female", "Age": 13, "Age_Group": "Pediatric (6-17)", "Comorbidities": ["Heart Failure"] }
+            },
+            "encounters": [{
+                "Diagnosis": "Osteomyelitis",
+                "Vitals": { "Temperature_C": 38.2, "Heart_Rate_bpm": 101, "Respiratory_Rate": 24, "SBP_mmHg": 125, "DBP_mmHg": 64, "SpO2_percent": 97.9, "GCS": 13 },
+                "Scores": { "SOFA": 0, "qSOFA": 2 }
+            }],
+            "labs": [{
+                "Lab_Date": "2026-05-04",
+                "CBC": { "WBC_x10^9/L": 13, "Neutrophil_percent": 83.1, "Lymphocyte_percent": 13.3 },
+                "Inflammatory_Markers": { "CRP_mg/L": 97, "PCT_ng/mL": 2.4 },
+                "Chemistry": { "BUN_mg/dL": 20, "Creatinine_mg/dL": 1.29, "eGFR_mL/min/1.73m2": 49.9, "AST_U/L": 31, "ALT_U/L": 24, "Albumin_g/dL": 2.9, "Lactate_mmol/L": 1.5 }
+            }],
+            "cultures": [{ "Specimen_Type": "Pus", "Organism": "Staphylococcus aureus" }],
+            "antibiograms": [{
+                "Organism": "Staphylococcus aureus", "Phenotype": "MRSA",
+                "AST_Results": [
+                    { "Antibiotic_Name": "Penicillin", "MIC_Value": ">=8 ug/mL", "Interpretation": "R" },
+                    { "Antibiotic_Name": "Oxacillin", "MIC_Value": "4 ug/mL", "Interpretation": "R" }
+                ]
+            }],
+            "antibiotics": [
+                { "Type": "Empiric", "Regimen": "Vancomycin + Cefepime" },
+                { "Type": "Definitive", "Regimen": "Linezolid", "Clinical_Note": "Targeted de-escalation to Linezolid monotherapy." }
+            ],
+            "outcomes": { "Clinical_Outcomes": { "ICU_Admission": true, "Length_of_Stay_Days": 20 }, "Trends": { "WBC_Trend": "Improved" } }
+        }];
+
+        let selectedPatient = globalDataset[0];
+        let currentTimeout = null;
+        const logContainer = document.getElementById('terminal-log');
+
+        window.onload = function() {
+            syncPatientUI();
+        };
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const parsedData = JSON.parse(e.target.result);
+                    if (Array.isArray(parsedData) && parsedData.length > 0) {
+                        globalDataset = parsedData;
+                        document.getElementById('upload-status').innerText = `Successfully loaded ${globalDataset.length} real clinical cases!`;
+                        document.getElementById('upload-status').className = 'text-emerald-400 font-bold text-xs px-3 font-mono';
+                        
+                        const selectEl = document.getElementById('patient-select');
+                        selectEl.innerHTML = '';
+                        globalDataset.forEach((item, index) => {
+                            const pId = item.patient?.Patient_ID || `Index_${index}`;
+                            const diag = item.encounters?.[0]?.Diagnosis || 'Unknown';
+                            const option = document.createElement('option');
+                            option.value = index;
+                            option.innerText = `${pId} (${diag.substring(0,12)})`;
+                            selectEl.appendChild(option);
+                        });
+
+                        selectedPatient = globalDataset[0];
+                        syncPatientUI();
+                        clearConsole();
+                        logContainer.innerHTML = `<div class="text-emerald-400">// [Data Stream Configured] Connected to real-world dataset. Choose a patient and select a phase to run the simulation.</div>`;
+                    }
+                } catch (err) {
+                    alert('JSON parsing failed. Please verify the file data structure format.');
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function onPatientChange(event) {
+            try {
+                const idx = event.target.value;
+                selectedPatient = globalDataset[idx];
+                syncPatientUI();
+                clearConsole();
+                logContainer.innerHTML = `<div class="text-blue-400">// Automatically switched to case: ${selectedPatient.patient?.Patient_ID || 'Unknown'}. UI panel synchronized in real-time.</div>`;
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        function syncPatientUI() {
+            try {
+                const p = selectedPatient.patient || {};
+                const enc = selectedPatient.encounters?.[0] || {};
+                const lab = selectedPatient.labs?.[0] || { CBC:{}, Inflammatory_Markers:{}, Chemistry:{} };
+                const cult = selectedPatient.cultures?.[0] || {};
+                const out = selectedPatient.outcomes?.Clinical_Outcomes || {};
+
+                document.getElementById('md-p-id').innerText = p.Patient_ID || 'N/A';
+                document.getElementById('md-p-demog').innerText = `${p.Demographics?.Age || '-'} y/o / ${p.Demographics?.Sex === 'Female' ? 'F' : 'M'}`;
+                document.getElementById('md-p-diag').innerText = enc.Diagnosis || 'N/A';
+                document.getElementById('md-p-comorb').innerText = p.Demographics?.Comorbidities?.join(', ') || 'None';
+
+                document.getElementById('ns-temp').innerText = enc.Vitals?.Temperature_C || 'N/A';
+                document.getElementById('ns-hr').innerText = enc.Vitals?.Heart_Rate_bpm || 'N/A';
+                document.getElementById('ns-rr').innerText = enc.Vitals?.Respiratory_Rate || 'N/A';
+                document.getElementById('ns-spo2').innerText = enc.Vitals?.SpO2_percent || 'N/A';
+                document.getElementById('ns-gcs').innerText = enc.Vitals?.GCS || 'N/A';
+                document.getElementById('ns-qsofa').innerText = enc.Scores?.qSOFA !== undefined ? enc.Scores.qSOFA : 'N/A';
+
+                document.getElementById('mt-specimen').innerText = cult.Specimen_Type || 'Not Specified';
+                document.getElementById('mt-organism').innerText = cult.Organism || 'Not Detected';
+
+                document.getElementById('ph-cr').innerText = lab.Chemistry ? (lab.Chemistry["Creatinine_mg/dL"] || 'N/A') : 'N/A';
+                document.getElementById('ph-egfr').innerText = lab.Chemistry ? (lab.Chemistry["eGFR_mL/min/1.73m2"] || 'N/A') : 'N/A';
+                document.getElementById('ph-bun').innerText = lab.Chemistry ? (lab.Chemistry["BUN_mg/dL"] || 'N/A') : 'N/A';
+                document.getElementById('ph-alb').innerText = lab.Chemistry ? (lab.Chemistry["Albumin_g/dL"] || 'N/A') : 'N/A';
+
+                document.getElementById('id-icu').innerText = out.ICU_Admission ? 'Required (ICU Protocol)' : 'General Ward';
+                document.getElementById('id-los').innerText = out.Length_of_Stay_Days || '-';
+                document.getElementById('id-mortality').innerText = selectedPatient.outcomes?.Trends?.WBC_Trend === 'Improved' ? 'Good Prognosis (Stable)' : 'Requires Continuous Monitoring';
+            } catch (err) {
+                console.error("UI synchronization error: ", err);
+            }
+        }
+
+        function clearConsole() {
+            logContainer.innerHTML = '<div class="text-slate-500">// Console cleared.</div>';
+            resetHighlights();
+            if(currentTimeout) clearTimeout(currentTimeout);
+        }
+
+        function resetHighlights() {
+            document.querySelectorAll('.agent-active, .human-active').forEach(el => {
+                el.classList.remove('agent-active', 'human-active');
+            });
+        }
+
+        function runPhase(phaseNum) {
+            clearConsole();
+            
+            const pId = selectedPatient.patient?.Patient_ID || 'N/A';
+            const enc = selectedPatient.encounters?.[0] || {};
+            const cult = selectedPatient.cultures?.[0] || {};
+            const lab = selectedPatient.labs?.[0] || { CBC:{}, Inflammatory_Markers:{}, Chemistry:{} };
+            const empiricRx = selectedPatient.antibiotics?.[0]?.Regimen || 'Broad-spectrum antibiotics';
+            const definitiveRx = selectedPatient.antibiotics?.[1]?.Regimen || 'Targeted narrow-spectrum antibiotics';
+            const clinicalNote = selectedPatient.antibiotics?.[1]?.Clinical_Note || 'No specific clinical markers.';
+
+            const bloodWbc = lab.CBC ? (lab.CBC["WBC_x10^9/L"] || 'N/A') : 'N/A';
+            const bloodNeut = lab.CBC ? (lab.CBC["Neutrophil_percent"] || 'N/A') : 'N/A';
+            const bloodLymph = lab.CBC ? (lab.CBC["Lymphocyte_percent"] || 'N/A') : 'N/A';
+            const markerCrp = lab.Inflammatory_Markers ? (lab.Inflammatory_Markers["CRP_mg/L"] || 'N/A') : 'N/A';
+            const markerPct = lab.Inflammatory_Markers ? (lab.Inflammatory_Markers["PCT_ng/mL"] || 'Not ordered') : 'Not ordered';
+            const chemBun = lab.Chemistry ? (lab.Chemistry["BUN_mg/dL"] || 'N/A') : 'N/A';
+            const chemCr = lab.Chemistry ? (lab.Chemistry["Creatinine_mg/dL"] || 'N/A') : 'N/A';
+            const chemEgfr = lab.Chemistry ? (lab.Chemistry["eGFR_mL/min/1.73m2"] || 'N/A') : 'N/A';
+            const chemLactate = lab.Chemistry ? (lab.Chemistry["Lactate_mmol/L"] || 'N/A') : 'N/A';
+            const chemAst = lab.Chemistry ? (lab.Chemistry["AST_U/L"] || 'N/A') : 'N/A';
+            const chemAlt = lab.Chemistry ? (lab.Chemistry["ALT_U/L"] || 'N/A') : 'N/A';
+
+            let phaseEvents = [];
+
+            if (phaseNum === 1) {
+                logContainer.innerHTML = `<div class="text-blue-400 font-bold border-b border-blue-900/45 pb-1">--- Launching Phase 1: Empiric Therapy & Historical Case Profile Matching (Case: ${pId}) ---</div>`;
+                phaseEvents = [
+                    { type: 'human', id: 'human-nurse', text: `[Frontline Nurse Alert] Patient reporting discomfort. Primary diagnosis: ${enc.Diagnosis || 'Infectious Disease'}. Recorded temperature: ${enc.Vitals?.Temperature_C || 38}°C.` },
+                    { type: 'human', id: 'human-nurse', text: `[Microbiology Specimen Collection] Adhering to core ASP guidelines, collected "${cult.Specimen_Type || 'Blood/Urine'}" specimen prior to first antibiotic dose.` },
+                    { type: 'human', id: 'human-md', text: `[Clinician Prescription] Issued initial orders for broad-spectrum antibiotic regimen: <span class="text-yellow-400 font-bold">${empiricRx}</span>.` },
+                    { type: 'agent', id: 'agent-ehr', text: `[EHR Structuring Agent] Automatically query data pipeline to review the patient's historical microbiology cultures and allergy profiles within the past 90 days.` },
+                    { type: 'visual-antibiogram', id: 'agent-ehr', text: '' },
+                    { type: 'human', id: 'human-pharmacist', text: `[Clinical Pharmacist Review] Completed initial dosage verification and approval based on historical resistance risk alerts provided by the Agent.` }
+                ];
+            } else if (phaseNum === 2) {
+                logContainer.innerHTML = `<div class="text-blue-400 font-bold border-b border-blue-900/45 pb-1">--- Launching Phase 2: Medical Center-Level Early Rapid Diagnostics & Organ Function Defense Review (Case: ${pId}) ---</div>`;
+                phaseEvents = [
+                    { type: 'human', id: 'human-mt', text: `[Microbiology Critical Alert] Rapid organism identification complete. MALDI-TOF detected key pathogen: <span class="text-amber-400 italic font-bold">${cult.Organism || 'Microbial Strain'}</span>.` },
+                    { type: 'visual-lab-bundle', id: 'agent-ehr', text: JSON.stringify({ bloodWbc, bloodNeut, bloodLymph, markerCrp, markerPct, chemBun, chemCr, chemEgfr, chemLactate, chemAst, chemAlt }) },
+                    { type: 'agent', id: 'agent-trend', text: `[AMR Context Agent] Instantly integrated mass spec report with ward-level epidemiological resistance matrices to compute environmental multi-drug resistance weights.` },
+                    { type: 'agent', id: 'agent-rag', text: `[Guideline Verification Agent] Initiated RAG vector database search, cross-referencing current inflammatory markers with international sepsis management guidelines.` },
+                    { type: 'agent', id: 'agent-safety', text: `[Safety Review Agent (Safety Gate)] Core Audit Lock! Evaluating today's chemistry panels: Creatinine at ${chemCr} mg/dL, lactate at ${chemLactate} mmol/L. Triggered deterministic clinical rule: enforced mandatory safety filtering on the LLM's de-escalation suggestion, warning the clinical team to avoid exacerbating potential drug-induced nephrotoxicity.` },
+                    { type: 'human', id: 'human-md', text: `[Clinical Team Final Review] Attending physician and ID specialist reviewed the high-risk physiological warning trajectories generated by the Agent. Confirmed appropriate; executed medication dosage adjustment and precision de-escalation.` }
+                ];
+            } else if (phaseNum === 3) {
+                logContainer.innerHTML = `<div class="text-blue-400 font-bold border-b border-blue-900/45 pb-1">--- Launching Phase 3: In Vitro Susceptibility Decryption & Targeted Precision De-escalation (Case: ${pId}) ---</div>`;
+                phaseEvents = [
+                    { type: 'human', id: 'human-mt', text: `[Microbiology Final Report] Complete 48-72 hour in vitro antimicrobial susceptibility testing (AST) and MIC results officially available.` },
+                    { type: 'agent', id: 'agent-ast', text: `[AST Interpretation Agent] Automatically parsed text-based susceptibility data, aligning and translating them into a standardized boolean S-I-R decision matrix.` },
+                    { type: 'agent', id: 'agent-rag', text: `[Guideline Verification Agent] Precisely matched pathogen guidelines to generate a tailored targeted regimen and de-escalation list: <span class="text-emerald-400 font-bold">${definitiveRx}</span>.` },
+                    { type: 'human', id: 'human-id', text: `[ID Specialist Co-signature] Physician reviewed the "RAG evidence citation chain" produced by the AI multi-agent workflow, providing electronic signature to issue precision consultation orders.` },
+                    { type: 'human', id: 'human-pharmacist', text: `[Clinical Pharmacist TDM Monitoring] Tracked dynamic clearance rates and serum drug concentrations, providing feedback and safety switch recommendations for intravenous-to-oral (IV-to-PO) conversion.` },
+                    { type: 'agent', id: 'agent-feedback', text: `[Clinical Feedback Agent] Packaged and archived the complete multi-agent interactive audit log (Agent Trace) for this case.<br><span class="text-slate-400 text-[11px] block mt-1.5 bg-slate-900 p-2.5 rounded-lg border border-slate-800"><b>Real Clinical Note:</b> ${clinicalNote}</span>` }
+                ];
+            }
+
+            executeEventStep(phaseEvents, 0);
+        }
+
+        function executeEventStep(events, index) {
+            if (index >= events.length) {
+                const endDiv = document.createElement('div');
+                endDiv.className = 'text-slate-500 font-bold pt-2 border-t border-slate-900 log-entry';
+                endDiv.innerHTML = `// [Status] Multi-source heterogeneous patient data stream (FHIR Schema) audit simulation completed.`;
+                logContainer.appendChild(endDiv);
+                logContainer.scrollTop = logContainer.scrollHeight;
+                return;
+            }
+
+            const ev = events[index];
+            resetHighlights();
+
+            const element = document.getElementById(ev.id);
+            if (element) {
+                if (ev.type === 'human') element.classList.add('human-active');
+                if (ev.type === 'agent') element.classList.add('agent-active');
+            }
+
+            const logDiv = document.createElement('div');
+            logDiv.className = 'log-entry space-y-1';
+            const timestamp = new Date().toLocaleTimeString();
+
+            if (ev.type === 'visual-antibiogram') {
+                const abData = selectedPatient.antibiograms?.[0] || { AST_Results: [] };
+                let rowsHtml = '';
+                
+                if (abData.AST_Results && abData.AST_Results.length > 0) {
+                    abData.AST_Results.forEach(r => {
+                        const interpretColor = r.Interpretation === 'R' ? 'text-red-400 font-bold' : 'text-emerald-400 font-bold';
+                        rowsHtml += `
+                            <tr class="border-b border-slate-800 hover:bg-slate-800/40 transition-colors">
+                                <td class="p-2 text-left text-slate-300 font-medium">${r.Antibiotic_Name}</td>
+                                <td class="p-2 ${interpretColor}">${r.Interpretation}</td>
+                                <td class="p-2 text-slate-400">${r.MIC_Value || '-'}</td>
+                            </tr>
+                        `;
+                    });
+                } else {
+                    rowsHtml = `<tr><td colspan="3" class="p-3 text-slate-500 italic">No historical culture data for this case</td></tr>`;
+                }
+
+                logDiv.innerHTML = `
+                    <div class="flex gap-2 text-amber-400 items-start">
+                        <span class="text-slate-600 font-normal">[${timestamp}]</span>
+                        <span class="font-bold">[PERSONAL_ANTIBIOGRAM]</span>
+                        <span class="flex-1">EHR Structuring Agent rendering profile (90 days):</span>
+                    </div>
+                    <div class="ml-8 my-2.5 bg-slate-900 border border-amber-500/20 rounded-xl p-3 max-w-md shadow-lg">
+                        <div class="text-slate-400 text-[11px] mb-2 font-semibold">Isolated: <span class="italic text-amber-400 font-bold">${abData.Organism || 'N/A'}</span> (${abData.Phenotype || 'Wild Type'})</div>
+                        <table class="w-full text-[11px] border-collapse font-mono">
+                            <thead>
+                                <tr class="bg-slate-950 text-slate-400 text-[10px] uppercase tracking-wider">
+                                    <th class="p-2 text-left rounded-l-md">Antibiotic</th>
+                                    <th class="p-2 text-center">INT</th>
+                                    <th class="p-2 text-center rounded-r-md">MIC</th>
+                                </tr>
+                            </thead>
+                            <tbody>${rowsHtml}</tbody>
+                        </table>
+                    </div>
+                `;
+            } 
+            else if (ev.type === 'visual-lab-bundle') {
+                const d = JSON.parse(ev.text);
+                logDiv.innerHTML = `
+                    <div class="flex gap-2 text-blue-400 items-start">
+                        <span class="text-slate-600 font-normal">[${timestamp}]</span>
+                        <span class="font-bold">[LAB_BUNDLE_INJECTION]</span>
+                        <span class="flex-1">EHR Core Routine Lab Bundle Parallel Synchronization:</span>
+                    </div>
+                    <div class="ml-8 my-2.5 bg-slate-900 border border-blue-500/20 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs max-w-xl shadow-lg">
+                        <div class="sm:border-r border-slate-800 sm:pr-3">
+                            <span class="text-blue-400 font-bold block mb-1.5 border-b border-slate-800 pb-1">🩸 Hematology & Inflammatory</span>
+                            <ul class="space-y-1 text-slate-300 text-[11px]">
+                                <div class="flex justify-between"><span>WBC (x10^9/L):</span><span class="text-red-400 font-bold">${d.bloodWbc}</span></div>
+                                <div class="flex justify-between"><span>Neutrophil (%):</span><span class="text-amber-400">${d.bloodNeut}</span></div>
+                                <div class="flex justify-between"><span>Lymphocyte (%):</span><span class="text-slate-400">${d.bloodLymph}</span></div>
+                                <div class="flex justify-between"><span>CRP (mg/L):</span><span class="text-red-400 font-bold">${d.markerCrp}</span></div>
+                                <div class="flex justify-between"><span>PCT (ng/mL):</span><span class="text-amber-300">${d.markerPct}</span></div>
+                            </ul>
+                        </div>
+                        <div>
+                            <span class="text-blue-400 font-bold block mb-1.5 border-b border-slate-800 pb-1">🧪 Metabolic & Organ Function</span>
+                            <ul class="space-y-1 text-slate-300 text-[11px]">
+                                <div class="flex justify-between"><span>BUN / Creatinine:</span><span class="text-amber-300">${d.chemBun} / ${d.chemCr}</span></div>
+                                <div class="flex justify-between"><span>eGFR Clearance:</span><span class="text-emerald-400 font-bold">${d.chemEgfr}</span></div>
+                                <div class="flex justify-between"><span>Lactate:</span><span class="text-red-400 font-bold">${d.chemLactate}</span></div>
+                                <div class="flex justify-between"><span>AST / ALT:</span><span class="text-slate-400">${d.chemAst} / ${d.chemAlt}</span></div>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+            } 
+            else {
+                const isHuman = ev.type === 'human';
+                logDiv.className = `log-entry flex gap-2 items-start ${isHuman ? 'text-emerald-300' : 'text-blue-300'}`;
+                const badgeColor = isHuman ? 'text-emerald-500' : 'text-blue-500';
+                const badge = isHuman ? '[HUMAN]' : '[AGENT]';
+                logDiv.innerHTML = `
+                    <span class="text-slate-600 font-normal">[${timestamp}]</span>
+                    <span class="${badgeColor} font-bold whitespace-nowrap">${badge}</span>
+                    <span class="flex-1 text-slate-200">${ev.text}</span>
+                `;
+            }
+            
+            logContainer.appendChild(logDiv);
+            logContainer.scrollTop = logContainer.scrollHeight;
+
+            currentTimeout = setTimeout(() => {
+                executeEventStep(events, index + 1);
+            }, 2000);
+        }
+    </script>
+</body>
+</html>
